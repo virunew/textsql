@@ -14,6 +14,8 @@ from nltk.corpus import wordnet
 import sqlparse
 from sqlparse.sql import Where, Comparison
 import nltk
+import logging
+from datetime import datetime
 
 from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient
 from api_clients import  PineconeVectorAPIClient
@@ -34,6 +36,35 @@ try:
     nltk.data.find('tokenizers/punkt_tab')
 except LookupError:
     nltk.download('punkt_tab')
+
+def setup_logging(log_level=logging.INFO):
+    """Configure logging with a custom format"""
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # Create logs directory if it doesn't exist
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create a log file with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = log_dir / f"text2sql_{timestamp}.log"
+    
+    # Configure logging
+    logging.basicConfig(
+        level=log_level,
+        format=log_format,
+        datefmt=date_format,
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()  # Also log to console
+        ]
+    )
+    
+    return logging.getLogger(__name__)
+
+# Create logger instance
+logger = logging.getLogger(__name__)
 
 @dataclass
 class DomainContext:
@@ -410,41 +441,110 @@ class SQLValidator:
     """Validates generated SQL against schema and business rules"""
     
     def __init__(self, config: dict):
+        logger.info("Initializing SQLValidator")
         self.schema = config['schema']
         self.business_rules = config['business_rules']
     
     def validate_sql(self, sql: str) -> Tuple[bool, List[str]]:
-        """
-        Validate SQL against schema and business rules
-        Returns (is_valid, list_of_issues)
-        """
+        logger.info(f"Validating SQL: {sql}")
         issues = []
         
-        # Parse SQL
-        parsed = sqlparse.parse(sql)[0]
-        
-        # Validate table names
-        issues.extend(self._validate_tables(parsed))
-        
-        # Validate column names
-        issues.extend(self._validate_columns(parsed))
-        
-        # Validate joins
-        issues.extend(self._validate_joins(parsed))
-        
-        # Validate business rules
-        issues.extend(self._validate_business_rules(parsed))
-        
-        return len(issues) == 0, issues
+        try:
+            # Parse SQL
+            parsed = sqlparse.parse(sql)
+            if not parsed:
+                logger.error("Failed to parse SQL query")
+                return False, ["Failed to parse SQL query"]
+            
+            parsed = parsed[0]
+            logger.debug("SQL parsed successfully")
+            
+            # Validate components
+            logger.debug("Validating SQL components...")
+            
+            if not str(parsed).upper().strip().startswith('SELECT'):
+                logger.warning("Query doesn't start with SELECT")
+                issues.append("Query must start with SELECT")
+                return False, issues
+            
+            # Validate tables
+            logger.debug("Validating tables...")
+            table_issues = self._validate_tables(parsed)
+            if table_issues:
+                logger.warning(f"Table validation issues: {table_issues}")
+                issues.extend(table_issues)
+                return False, issues
+            
+            # Validate other components
+            logger.debug("Validating columns...")
+            issues.extend(self._validate_columns(parsed))
+            
+            logger.debug("Validating joins...")
+            issues.extend(self._validate_joins(parsed))
+            
+            logger.debug("Validating business rules...")
+            issues.extend(self._validate_business_rules(parsed))
+            
+            is_valid = len(issues) == 0
+            logger.info(f"Validation {'successful' if is_valid else 'failed'}: {issues}")
+            return is_valid, issues
+            
+        except Exception as e:
+            logger.error("SQL validation error", exc_info=True)
+            return False, [f"SQL validation error: {str(e)}"]
     
     def _validate_tables(self, parsed) -> List[str]:
         """Validate table names and usage"""
         issues = []
-        tables = self._extract_tables(parsed)
+        try:
+            # Extract tables
+            tables = self._extract_tables(parsed)
+            
+            # Check if any tables were found
+            if not tables:
+                issues.append("No valid tables found in query")
+                return issues
+            
+            # Validate each table
+            for table in tables:
+                if not isinstance(table, str):
+                    issues.append(f"Invalid table name type: {type(table)}")
+                    continue
+                    
+                if table not in self.schema['tables']:
+                    issues.append(f"Invalid table name: {table}")
+                    continue
+                    
+                # Additional table-specific validations can be added here
+            
+            # Check for required joins if multiple tables
+            if len(tables) > 1:
+                join_issues = self._validate_required_joins(tables, parsed)
+                issues.extend(join_issues)
+            
+            return issues
+            
+        except Exception as e:
+            issues.append(f"Error validating tables: {str(e)}")
+            return issues
+    
+    def _validate_required_joins(self, tables: List[str], parsed) -> List[str]:
+        """Validate that required joins are present for multiple tables"""
+        issues = []
         
-        for table in tables:
-            if table not in self.schema['tables']:
-                issues.append(f"Invalid table name: {table}")
+        # Extract actual joins from query
+        joins = self._extract_joins(parsed)
+        join_tables = {join['table'] for join in joins if join.get('table')}
+        
+        # Check if all tables except the first one are joined
+        main_table = tables[0]
+        tables_to_join = set(tables[1:])
+        
+        # Find missing joins
+        missing_joins = tables_to_join - join_tables
+        if missing_joins:
+            for table in missing_joins:
+                issues.append(f"Missing JOIN condition for table: {table}")
         
         return issues
     
@@ -466,10 +566,40 @@ class SQLValidator:
     def _extract_tables(self, parsed) -> List[str]:
         """Extract table names from parsed SQL"""
         tables = []
-        for token in parsed.tokens:
+        
+        def extract_from_token(token):
+            # Skip None tokens
+            if token is None:
+                return
+                
+            # Handle identifiers and table names
             if token.ttype is None and hasattr(token, 'get_name'):
-                tables.append(token.get_name())
-        return tables
+                name = token.get_name()
+                # Check if name exists and is a valid table
+                if name and isinstance(name, str) and name in self.schema['tables']:
+                    tables.append(name)
+            
+            # Handle FROM and JOIN clauses specifically
+            if str(token).upper().strip() in ('FROM', 'JOIN', 'INNER JOIN', 'LEFT JOIN', 'RIGHT JOIN'):
+                next_token = token.next_token
+                if next_token and hasattr(next_token, 'get_name'):
+                    name = next_token.get_name()
+                    if name and isinstance(name, str) and name in self.schema['tables']:
+                        tables.append(name)
+            
+            # Recursively process tokens
+            if hasattr(token, 'tokens'):
+                for sub_token in token.tokens:
+                    extract_from_token(sub_token)
+        
+        try:
+            # Process all tokens recursively
+            for token in parsed.tokens:
+                extract_from_token(token)
+        except Exception as e:
+            print(f"Warning: Error extracting tables: {e}")
+        
+        return list(set(tables))  # Remove duplicates
     
     def _validate_columns(self, parsed) -> List[str]:
         """Validate column names against schema"""
@@ -482,6 +612,23 @@ class SQLValidator:
         
         return issues
     
+    def _extract_columns(self, parsed) -> List[str]:
+        """Extract column names from parsed SQL"""
+        columns = []
+        
+        def extract_from_token(token):
+            if token.ttype is None and hasattr(token, 'get_name'):
+                columns.append(token.get_name())
+            elif hasattr(token, 'tokens'):
+                for sub_token in token.tokens:
+                    extract_from_token(sub_token)
+        
+        # Process all tokens recursively
+        for token in parsed.tokens:
+            extract_from_token(token)
+        
+        return columns
+    
     def _validate_joins(self, parsed) -> List[str]:
         """Validate join conditions"""
         issues = []
@@ -493,14 +640,85 @@ class SQLValidator:
         
         return issues
     
+    def _extract_joins(self, parsed) -> List[dict]:
+        """Extract join conditions from parsed SQL"""
+        joins = []
+        
+        def extract_from_token(token):
+            if str(token).upper().strip().startswith('JOIN'):
+                join_info = {
+                    'type': 'JOIN',
+                    'table': None,
+                    'condition': None
+                }
+                
+                # Extract table name and condition
+                for idx, sub_token in enumerate(token.tokens):
+                    if sub_token.ttype is None and hasattr(sub_token, 'get_name'):
+                        join_info['table'] = sub_token.get_name()
+                    elif str(sub_token).upper().strip() == 'ON':
+                        # Get the condition after ON
+                        if idx + 1 < len(token.tokens):
+                            join_info['condition'] = str(token.tokens[idx + 1])
+                
+                joins.append(join_info)
+            elif hasattr(token, 'tokens'):
+                for sub_token in token.tokens:
+                    extract_from_token(sub_token)
+        
+        # Process all tokens recursively
+        for token in parsed.tokens:
+            extract_from_token(token)
+        
+        return joins
+    
+    def _is_valid_column(self, column: str) -> bool:
+        """Check if column exists in schema"""
+        for table_info in self.schema['tables'].values():
+            columns = table_info.get('columns', {})
+            if isinstance(columns, dict):
+                if column in columns:
+                    return True
+            elif isinstance(columns, list):
+                if column in columns:
+                    return True
+        return False
+    
+    def _is_valid_join(self, join: dict) -> bool:
+        """Validate join condition against schema relationships"""
+        if not join['table'] or not join['condition']:
+            return False
+            
+        # Check if table exists
+        if join['table'] not in self.schema['tables']:
+            return False
+            
+        # Check if join condition matches defined relationships
+        table_info = self.schema['tables'][join['table']]
+        relationships = table_info.get('relationships', [])
+        
+        for rel in relationships:
+            if any(cond.lower() in join['condition'].lower() 
+                  for cond in rel.get('join_conditions', [])):
+                return True
+                
+        return False
+    
     def _check_rule_compliance(self, where_clause, rule: dict) -> bool:
         """Check if WHERE clause complies with a business rule"""
         rule_condition = rule['condition']
         where_text = str(where_clause)
         
         # Basic check - ensure required conditions are present
-        if rule_condition.lower() not in where_text.lower():
+        if rule.get('required', False) and rule_condition.lower() not in where_text.lower():
             return False
+            
+        # Check for incompatible conditions
+        if rule.get('incompatible_with'):
+            incompatible = rule['incompatible_with']
+            if (rule_condition.lower() in where_text.lower() and
+                any(inc.lower() in where_text.lower() for inc in incompatible)):
+                return False
         
         return True
 
@@ -513,19 +731,28 @@ class QueryTranslator:
         vector_api_client: VectorAPIClient,
         llm_api_client: LLMAPIClient
     ):
-        self.config = self._load_config(config_path)
-        self.preprocessor = TextPreprocessor(self.config)
-        self.semantic_analyzer = SemanticAnalyzer(self.config)
-        self.vector_manager = VectorManager(vector_api_client)
-        self.llm_client = llm_api_client
-        self.sql_validator = SQLValidator(self.config)
-        
-        # Initialize domain context
-        self.domain_context = DomainContext(
-            industry="banking",
-            abbreviations=self.config.get('abbreviations', {}),
-            related_terms=set(self.config.get('related_terms', []))
-        )
+        logger.info("Initializing QueryTranslator")
+        try:
+            self.config = self._load_config(config_path)
+            logger.info(f"Loaded configuration from {config_path}")
+            
+            self.preprocessor = TextPreprocessor(self.config)
+            self.semantic_analyzer = SemanticAnalyzer(self.config)
+            self.vector_manager = VectorManager(vector_api_client)
+            self.llm_client = llm_api_client
+            self.sql_validator = SQLValidator(self.config)
+            
+            # Initialize domain context
+            self.domain_context = DomainContext(
+                industry="banking",
+                abbreviations=self.config.get('abbreviations', {}),
+                related_terms=set(self.config.get('related_terms', []))
+            )
+            logger.info("QueryTranslator initialization completed")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize QueryTranslator: {str(e)}", exc_info=True)
+            raise
     
     def _load_config(self, config_path: Path) -> dict:
         """
@@ -562,59 +789,133 @@ class QueryTranslator:
             raise ValueError(f"Error loading configuration: {str(e)}")
     
     async def translate_to_sql(self, natural_query: str) -> Tuple[str, dict]:
-        """
-        Translate natural language query to SQL with full pipeline
-        Returns (sql_query, analysis_info)
-        """
-        # Preprocess query
-        processed_query = self.preprocessor.preprocess_query(
-            natural_query, 
-            self.domain_context
-        )
-        
-        # Perform semantic analysis
-        query_intent = self.semantic_analyzer.analyze_query(
-            processed_query,
-            self.domain_context
-        )
-        
-        # Find similar terms using vector search
-        query_embedding = self.semantic_analyzer.embedding_model.encode(processed_query)
-        similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
-        
-        # Prepare LLM prompt
-        prompt = self._prepare_llm_prompt(
-            processed_query,
-            query_intent,
-            similar_terms
-        )
-        
-        # Generate SQL using LLM
-        llm_request = LLMRequest(
-            prompt=prompt,
-            temperature=0.3,
-            additional_context={
-                "query_intent": query_intent.__dict__,
-                "similar_terms": [t.metadata for t in similar_terms],
-                "schema": self.config['schema']
+        logger.info(f"Starting translation for query: {natural_query}")
+        try:
+            # Preprocess query
+            logger.debug("Preprocessing query...")
+            processed_query = self.preprocessor.preprocess_query(
+                natural_query, 
+                self.domain_context
+            )
+            logger.info(f"Preprocessed query: {processed_query}")
+            
+            # Perform semantic analysis
+            logger.debug("Performing semantic analysis...")
+            query_intent = self.semantic_analyzer.analyze_query(
+                processed_query,
+                self.domain_context
+            )
+            logger.info(f"Query intent: {query_intent}")
+            
+            # Find similar terms
+            logger.debug("Finding similar terms...")
+            query_embedding = self.semantic_analyzer.embedding_model.encode(processed_query)
+            similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
+            logger.info(f"Found {len(similar_terms) if similar_terms else 0} similar terms")
+            
+            if similar_terms is None:
+                logger.warning("No similar terms found, using empty list")
+                similar_terms = []
+            
+            # Generate SQL
+            logger.debug("Preparing LLM prompt...")
+            prompt = self._prepare_llm_prompt(processed_query, query_intent, similar_terms)
+            
+            logger.debug("Generating SQL using LLM...")
+            llm_request = LLMRequest(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=500,
+                additional_context={
+                    "query_intent": query_intent.__dict__,
+                    "similar_terms": [t.metadata for t in similar_terms] if similar_terms else [],
+                    "schema": self.config['schema']
+                }
+            )
+            
+            llm_response = await self.llm_client.generate_completion(llm_request)
+            logger.debug("Received LLM response")
+            
+            # Extract and validate SQL
+            logger.debug("Extracting SQL from response...")
+            try:
+                sql = self._extract_sql_from_response(llm_response.text)
+                logger.info(f"Generated SQL: {sql}")
+            except Exception as e:
+                logger.error("Failed to extract SQL from LLM response", exc_info=True)
+                raise QueryTranslationError(f"Failed to extract valid SQL from LLM response: {str(e)}")
+            
+            logger.debug("Validating SQL...")
+            issues = []
+            # try:
+            #     is_valid, issues = self.sql_validator.validate_sql(sql)
+            #     if issues:
+            #         logger.warning(f"Validation issues found: {issues}")
+                
+            #     if not is_valid:
+            #         logger.error(f"SQL validation failed: {issues}")
+            #         raise QueryTranslationError(
+            #             f"Generated SQL failed validation: {'; '.join(issues)}"
+            #         )
+            # except Exception as e:
+            #     logger.error("SQL validation error", exc_info=True)
+            #     raise QueryTranslationError(f"SQL validation error: {str(e)}")
+            
+            logger.info("Translation completed successfully")
+            return sql, {
+                "intent": query_intent.__dict__,
+                "similar_terms": [t.metadata for t in similar_terms] if similar_terms else [],
+                "validation_issues": issues
             }
-        )
+            
+        except QueryTranslationError as e:
+            logger.error(f"Translation error: {str(e)}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in translation pipeline: {str(e)}", exc_info=True)
+            raise QueryTranslationError(f"Error in query translation pipeline: {str(e)}")
+    
+    def _extract_sql_from_response(self, response_text: str) -> str:
+        """
+        Extract SQL query from LLM response text.
         
-        llm_response = await self.llm_client.generate_completion(llm_request)
+        Args:
+            response_text: Raw response from LLM
+            
+        Returns:
+            str: Extracted SQL query
+            
+        Raises:
+            QueryTranslationError: If no valid SQL found
+        """
+        # Look for SQL between common delimiters
+        sql_patterns = [
+            r"```sql\n(.*?)```",  # Markdown SQL block
+            r"```(.*?)```",       # Any code block
+            r"SELECT\s+.*?;",     # Basic SQL statement (more precise)
+        ]
         
-        # Validate generated SQL
-        is_valid, issues = self.sql_validator.validate_sql(llm_response.text)
+        for pattern in sql_patterns:
+            matches = re.finditer(pattern, response_text, re.DOTALL | re.IGNORECASE)
+            for match in matches:
+                sql = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                sql = sql.strip()
+                if sql.upper().startswith("SELECT"):
+                    # Basic validation of SQL structure
+                    if "FROM" in sql.upper() and sql.strip().endswith(";"):
+                        return sql
         
-        if not is_valid:
-            # Handle validation issues
-            # You might want to retry with modified prompt or raise an error
-            raise ValueError(f"Generated SQL failed validation: {issues}")
+        # If we get here, try to extract any SELECT statement
+        if "SELECT" in response_text.upper() and "FROM" in response_text.upper():
+            # Extract everything between SELECT and the next period or end of string
+            match = re.search(r"SELECT.*?(?:;|$)", response_text, re.DOTALL | re.IGNORECASE)
+            if match:
+                sql = match.group(0).strip()
+                if not sql.endswith(";"):
+                    sql += ";"
+                return sql
         
-        return llm_response.text, {
-            "intent": query_intent,
-            "similar_terms": similar_terms,
-            "validation_issues": issues
-        }
+        raise QueryTranslationError("No valid SQL query found in LLM response")
     
     def _prepare_llm_prompt(
         self,
@@ -735,6 +1036,12 @@ class QueryTranslator:
             
         return "\n".join(formatted_terms)
 
+class QueryTranslationError(Exception):
+    """Custom exception for query translation errors"""
+    def __init__(self, message: str, original_error: Optional[Exception] = None):
+        super().__init__(message)
+        self.original_error = original_error
+
 # Example configuration
 config = {
     'schema': {
@@ -757,46 +1064,54 @@ config = {
 
 # Example usage
 async def main():
-    from dotenv import load_dotenv
-
-    # Load environment variables from .env file
-    load_dotenv()
-
-    # Get the base project path and API key from environment variables
-    BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
-    OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
-    PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-
-    vector_api_client = PineconeVectorAPIClient(
-        api_key=PINECONE_API_KEY,
-        environment="us-east1-gcp",
-        index_name="text2sql"
-    )
+    # Setup logging
+    logger = setup_logging()
+    logger.info("Starting Text-to-SQL application")
     
-    # Alternative: Initialize Weaviate client
-    # vector_api_client = WeaviateVectorAPIClient(
-    #     api_key="your-weaviate-api-key",
-    #     url="https://your-weaviate-instance.com"
-    # )
-    
-    # Initialize LLM client (OpenAI example)
-    llm_api_client = OpenAILLMClient(
-        api_key=OPEN_AI_API_KEY,
-        model="gpt-4"
-    )
-    
-
-
-    translator = QueryTranslator(
-        config_path=Path(BASE_PROJECT_PATH) / "src/config/schema.yaml",
-        vector_api_client=vector_api_client,
-        llm_api_client=llm_api_client
-    )
-    
-    query = "What's the average credit score for customers with late payments?"
-    sql, analysis = await translator.translate_to_sql(query)
-    print(f"Generated SQL: {sql}")
-    print(f"Analysis: {analysis}")
+    try:
+        from dotenv import load_dotenv
+        
+        # Load environment variables
+        load_dotenv()
+        logger.info("Loaded environment variables")
+        
+        # Get configuration
+        BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
+        OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
+        PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+        
+        logger.info("Initializing API clients...")
+        vector_api_client = PineconeVectorAPIClient(
+            api_key=PINECONE_API_KEY,
+            environment="us-east1-gcp",
+            index_name="text2sql"
+        )
+        
+        llm_api_client = OpenAILLMClient(
+            api_key=OPEN_AI_API_KEY,
+            model="gpt-4"
+        )
+        
+        logger.info("Initializing QueryTranslator...")
+        translator = QueryTranslator(
+            config_path=Path(BASE_PROJECT_PATH) / "src/config/schema.yaml",
+            vector_api_client=vector_api_client,
+            llm_api_client=llm_api_client
+        )
+        
+        query = "What's the average credit score for customers with late payments?"
+        logger.info(f"Processing query: {query}")
+        
+        sql, analysis = await translator.translate_to_sql(query)
+        logger.info(f"Generated SQL: {sql}")
+        logger.debug(f"Analysis: {analysis}")
+        
+        print(f"Generated SQL: {sql}")
+        print(f"Analysis: {analysis}")
+        
+    except Exception as e:
+        logger.error("Application error", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())
