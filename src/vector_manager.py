@@ -19,7 +19,12 @@ class VectorManager:
         
     async def find_similar_terms(self, query_embedding: List[float]) -> List[VectorSearchResult]:
         """Find similar terms using vector similarity search"""
-        return await self.vector_api_client.search_vectors(query_embedding)
+        try:
+            results = await self.vector_api_client.search_vectors(query_embedding)
+            return results if results is not None else []
+        except Exception as e:
+            print(f"Error in vector search: {e}")
+            return []  # Return empty list on error
         
     async def store_term_vectors(self, terms: List[Dict[str, Any]], vectors: List[List[float]]) -> bool:
         """Store term vectors with their metadata"""

@@ -166,276 +166,129 @@ class TextPreprocessor:
         return result
 
 class SemanticAnalyzer:
-    """Enhanced semantic analysis with context awareness"""
+    """Analyzes semantic meaning of queries"""
     
     def __init__(self, config: dict):
-        self.embedding_model = SentenceTransformer('all-mpnet-base-v2')
         self.config = config
+        self.embedding_model = SentenceTransformer('all-mpnet-base-v2')
         self.term_patterns = self._compile_term_patterns()
-        self.nlp_patterns = self._compile_nlp_patterns()
-    
+        
     def _compile_term_patterns(self) -> Dict[str, re.Pattern]:
         """Compile regex patterns for domain terms"""
         patterns = {}
-        domain_terms = self.config.get('domain_terms', {})
+        domain_terms = self.config.get('domain_terms', [])
         
-        for term, info in domain_terms.items():
-            # Create pattern for main term
-            patterns[term] = re.compile(rf'\b{term}\b', re.IGNORECASE)
+        for term_info in domain_terms:  # Changed from dict to list iteration
+            term = term_info['term']
+            synonyms = term_info.get('synonyms', [])
             
-            # Add patterns for synonyms
-            for synonym in info.get('synonyms', []):
-                patterns[synonym] = re.compile(rf'\b{synonym}\b', re.IGNORECASE)
-                
-            # Add patterns for abbreviations
-            for abbr in info.get('abbreviations', []):
-                patterns[abbr] = re.compile(rf'\b{abbr}\b', re.IGNORECASE)
-                
+            # Create pattern that matches the term or any of its synonyms
+            term_variants = [term] + synonyms
+            # Escape special characters and join with OR
+            pattern_str = '|'.join(map(re.escape, term_variants))
+            patterns[term] = re.compile(pattern_str, re.IGNORECASE)
+            
         return patterns
-    
-    def _compile_nlp_patterns(self) -> Dict[str, List[re.Pattern]]:
-        """Compile patterns for NLP analysis"""
-        return {
-            'aggregate': [
-                re.compile(r'\b(average|avg|mean)\b', re.IGNORECASE),
-                re.compile(r'\b(sum|total)\b', re.IGNORECASE),
-                re.compile(r'\b(count|number of)\b', re.IGNORECASE),
-                re.compile(r'\b(minimum|min|lowest)\b', re.IGNORECASE),
-                re.compile(r'\b(maximum|max|highest)\b', re.IGNORECASE)
-            ],
-            'temporal': [
-                re.compile(r'\b(today|yesterday|tomorrow)\b', re.IGNORECASE),
-                re.compile(r'\b(last|past|previous)\s+(\d+|few|couple)\s*(day|week|month|year)s?\b', re.IGNORECASE),
-                re.compile(r'\b(this|current)\s+(week|month|year)\b', re.IGNORECASE)
-            ]
-        }
-    
-    def _extract_entities(self, query: str) -> List[str]:
-        """Extract domain-specific entities from query"""
-        entities = []
         
-        try:
-            # Try to use NLTK tokenization
-            words = word_tokenize(query.lower())
-        except Exception as e:
-            # Fallback to simple splitting if NLTK fails
-            print(f"Warning: NLTK tokenization failed, using fallback: {str(e)}")
-            words = query.lower().split()
-        
-        # Check for matches in term patterns
-        for term, pattern in self.term_patterns.items():
-            if pattern.search(query):
-                entities.append(term)
-        
-        # Check database schema for table and column matches
-        schema = self.config.get('schema', {}).get('tables', {})
-        for table, info in schema.items():
-            if re.search(rf'\b{table}\b', query, re.IGNORECASE):
-                entities.append(table)
-            
-            # Check columns
-            columns = info.get('columns', {})
-            if isinstance(columns, dict):
-                for col_name in columns.keys():
-                    if re.search(rf'\b{col_name}\b', query, re.IGNORECASE):
-                        entities.append(col_name)
-            elif isinstance(columns, list):
-                for column in columns:
-                    if isinstance(column, str):
-                        if re.search(rf'\b{column}\b', query, re.IGNORECASE):
-                            entities.append(column)
-                    elif isinstance(column, dict):
-                        col_name = list(column.keys())[0]
-                        if re.search(rf'\b{col_name}\b', query, re.IGNORECASE):
-                            entities.append(col_name)
-        
-        return list(set(entities))  # Remove duplicates
-    
-    def _identify_aggregation(self, query: str) -> Optional[str]:
-        """Identify aggregation type if present"""
-        for pattern in self.nlp_patterns['aggregate']:
-            match = pattern.search(query.lower())
-            if match:
-                agg_term = match.group(0).lower()
-                if 'average' in agg_term or 'avg' in agg_term or 'mean' in agg_term:
-                    return 'AVG'
-                elif 'sum' in agg_term or 'total' in agg_term:
-                    return 'SUM'
-                elif 'count' in agg_term or 'number' in agg_term:
-                    return 'COUNT'
-                elif 'min' in agg_term or 'lowest' in agg_term:
-                    return 'MIN'
-                elif 'max' in agg_term or 'highest' in agg_term:
-                    return 'MAX'
-        return None
-    
-    def _extract_temporal_context(self, query: str) -> Optional[str]:
-        """Extract temporal context from query"""
-        for pattern in self.nlp_patterns['temporal']:
-            match = pattern.search(query)
-            if match:
-                return match.group(0)
-        return None
-    
     def analyze_query(self, query: str, context: DomainContext) -> QueryIntent:
         """
-        Perform comprehensive semantic analysis of the query
+        Analyze query to determine intent and entities
+        
+        Args:
+            query: Preprocessed query text
+            context: Domain context for interpretation
+            
+        Returns:
+            QueryIntent object with analysis results
         """
-        # Extract basic intent
-        intent = self._extract_base_intent(query)
+        # Tokenize query
+        tokens = word_tokenize(query.lower())
         
-        # Enhance with domain context
-        intent = self._enhance_with_context(intent, context)
+        # Identify action type and aggregation
+        action_type = self._determine_action_type(tokens)
+        aggregation_type = self._determine_aggregation(tokens)
         
-        # Extract conditions and comparisons
-        intent.conditions = self._extract_conditions(query)
+        # Extract main entities (using compiled patterns)
+        main_entities = []
+        for term, pattern in self.term_patterns.items():
+            if pattern.search(query):
+                main_entities.append(term)
         
-        # Identify temporal context if any
-        intent.temporal_context = self._extract_temporal_context(query)
+        # Extract conditions
+        conditions = self._extract_conditions(query, context)
         
-        return intent
-    
-    def _extract_base_intent(self, query: str) -> QueryIntent:
-        """Extract base query intent"""
-        # Identify action type
-        action_type = self._identify_action_type(query)
-        
-        # Extract main entities
-        entities = self._extract_entities(query)
-        
-        # Identify aggregation if present
-        agg_type = self._identify_aggregation(query)
+        # Determine temporal context if any
+        temporal_context = self._extract_temporal_context(tokens)
         
         return QueryIntent(
             action_type=action_type,
-            main_entities=entities,
-            conditions=[],
-            aggregation_type=agg_type
+            main_entities=main_entities,
+            conditions=conditions,
+            temporal_context=temporal_context,
+            aggregation_type=aggregation_type
         )
     
-    def _identify_action_type(self, query: str) -> str:
-        """Identify the type of query action"""
-        if any(word in query.lower() for word in ['average', 'sum', 'count', 'min', 'max']):
+    def _determine_action_type(self, tokens: List[str]) -> str:
+        """Determine the type of action requested"""
+        if any(word in tokens for word in ['average', 'avg', 'mean']):
             return 'AGGREGATE'
-        elif any(word in query.lower() for word in ['compare', 'difference', 'versus']):
+        if any(word in tokens for word in ['compare', 'difference', 'versus']):
             return 'COMPARE'
-        else:
-            return 'SELECT'
+        return 'SELECT'
     
-    def _extract_conditions(self, query: str) -> List[dict]:
-        """Extract conditions and comparisons from query"""
+    def _determine_aggregation(self, tokens: List[str]) -> Optional[str]:
+        """Determine aggregation type if present"""
+        agg_keywords = {
+            'average': 'AVG',
+            'avg': 'AVG',
+            'sum': 'SUM',
+            'total': 'SUM',
+            'count': 'COUNT',
+            'number': 'COUNT',
+            'maximum': 'MAX',
+            'max': 'MAX',
+            'minimum': 'MIN',
+            'min': 'MIN'
+        }
+        
+        for token in tokens:
+            if token.lower() in agg_keywords:
+                return agg_keywords[token.lower()]
+        return None
+    
+    def _extract_conditions(self, query: str, context: DomainContext) -> List[dict]:
+        """Extract conditions from query"""
         conditions = []
+        domain_terms = self.config.get('domain_terms', [])
         
-        # Look for comparison patterns
-        comparison_patterns = [
-            (r'(greater|more|higher|above|over) than (\d+)', '>'),
-            (r'(less|lower|below|under) than (\d+)', '<'),
-            (r'equal to (\d+)', '='),
-            (r'at least (\d+)', '>='),
-            (r'at most (\d+)', '<=')
-        ]
-        
-        for pattern, operator in comparison_patterns:
-            matches = re.finditer(pattern, query.lower())
-            for match in matches:
+        # Look for conditions based on domain terms
+        for term_info in domain_terms:  # Changed from dict to list iteration
+            term = term_info['term']
+            if term_info.get('value') and term_info['value'].lower() in query.lower():
                 conditions.append({
-                    'value': float(match.group(2)),
-                    'operator': operator,
-                    'context': query[max(0, match.start()-20):min(len(query), match.end()+20)]
+                    'field': term_info['column'],
+                    'table': term_info['table'],
+                    'operator': '=',
+                    'value': term_info['value']
                 })
         
         return conditions
     
-    def _enhance_with_context(self, intent: QueryIntent, context: DomainContext) -> QueryIntent:
-        """
-        Enhance query intent with domain context.
+    def _extract_temporal_context(self, tokens: List[str]) -> Optional[str]:
+        """Extract temporal context if present"""
+        temporal_indicators = {
+            'today': 'CURRENT_DATE',
+            'yesterday': 'CURRENT_DATE - 1',
+            'this month': 'CURRENT_MONTH',
+            'last month': 'PREVIOUS_MONTH',
+            'this year': 'CURRENT_YEAR'
+        }
         
-        Args:
-            intent: Base query intent
-            context: Domain-specific context
-            
-        Returns:
-            Enhanced query intent
-        """
-        # Add domain-specific abbreviation expansions
-        if context.abbreviations:
-            expanded_entities = []
-            for entity in intent.main_entities:
-                if entity in context.abbreviations:
-                    expanded_entities.append(context.abbreviations[entity])
-                expanded_entities.append(entity)
-            intent.main_entities = list(set(expanded_entities))
-        
-        # Add related terms from context
-        if context.related_terms:
-            related_entities = []
-            for entity in intent.main_entities:
-                # Add directly related terms
-                related = [term for term in context.related_terms 
-                         if self._are_terms_related(entity, term)]
-                related_entities.extend(related)
-            
-            # Add to main entities if they're relevant
-            intent.main_entities.extend(
-                [term for term in related_entities 
-                 if self._is_term_relevant(term, context.current_context)]
-            )
-            intent.main_entities = list(set(intent.main_entities))
-        
-        # Adjust intent based on industry context
-        if context.industry == "banking":
-            # Add banking-specific interpretations
-            self._enhance_banking_context(intent)
-        
-        return intent
-    
-    def _are_terms_related(self, term1: str, term2: str) -> bool:
-        """Check if two terms are semantically related using WordNet"""
-        try:
-            # Get WordNet synsets for both terms
-            synsets1 = wordnet.synsets(term1)
-            synsets2 = wordnet.synsets(term2)
-            
-            if not synsets1 or not synsets2:
-                return False
-            
-            # Check path similarity between first synsets
-            similarity = synsets1[0].path_similarity(synsets2[0])
-            return similarity is not None and similarity > 0.5
-            
-        except Exception as e:
-            print(f"Warning: WordNet similarity check failed: {str(e)}")
-            return False
-    
-    def _is_term_relevant(self, term: str, current_context: Optional[str]) -> bool:
-        """Check if a term is relevant in the current context"""
-        if not current_context:
-            return True
-            
-        # Get domain-specific relevance rules
-        relevance_rules = self.config.get('domain_terms', {}).get(term, {}).get('context_rules', [])
-        
-        for rule in relevance_rules:
-            if rule.get('when') == current_context:
-                return rule.get('weight', 'normal') != 'ignore'
-        
-        return True
-    
-    def _enhance_banking_context(self, intent: QueryIntent):
-        """Add banking-specific enhancements to intent"""
-        # Example: Add common banking-related joins
-        if 'credit_score' in intent.main_entities:
-            if 'payment_history' not in intent.main_entities:
-                intent.main_entities.append('payment_history')
-        
-        # Example: Add standard banking conditions
-        if intent.action_type == 'AGGREGATE' and 'risk_rating' in intent.main_entities:
-            intent.conditions.append({
-                'type': 'filter',
-                'field': 'risk_rating',
-                'operator': 'IN',
-                'values': ['LOW', 'MEDIUM', 'HIGH']
-            })
+        query_text = ' '.join(tokens)
+        for indicator, sql_value in temporal_indicators.items():
+            if indicator in query_text:
+                return sql_value
+        return None
 
 class SQLValidator:
     """Validates generated SQL against schema and business rules"""
@@ -1063,6 +916,68 @@ config = {
 }
 
 # Example usage
+async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict):
+    """Initialize vector database with domain terms from config"""
+    logger.info("Initializing vector database with domain terms...")
+    
+    try:
+        # Get domain terms from config
+        domain_terms = config.get('domain_terms', [])
+        if not domain_terms:
+            logger.warning("No domain terms found in config")
+            return
+        
+        # Create vector data for each term
+        vector_data = []
+        model = SentenceTransformer('all-mpnet-base-v2')
+        
+        for term in domain_terms:
+            # Create description that includes synonyms
+            description = term['description']
+            if 'synonyms' in term:
+                description += f" (Also known as: {', '.join(term['synonyms'])})"
+            
+            # Generate embedding for the term and its description
+            text_to_embed = f"{term['term']} - {description}"
+            embedding = model.encode(text_to_embed)
+            
+            # Create metadata with only non-null values
+            metadata = {
+                'term': term['term'],
+                'description': term['description'],
+                'synonyms': term.get('synonyms', [])
+            }
+            
+            # Add optional fields only if they exist and are not None
+            if term.get('table'):
+                metadata['table'] = term['table']
+            if term.get('column'):
+                metadata['column'] = term['column']
+            if term.get('value'):
+                metadata['value'] = term['value']
+            
+            # Create vector data
+            vector_data.append(VectorData(
+                id=f"term_{term['term'].replace(' ', '_')}",
+                vector=embedding.tolist(),  # Convert numpy array to list
+                metadata=metadata
+            ))
+            
+            logger.debug(f"Created vector data for term: {term['term']}")
+        
+        # Store vectors in database
+        logger.info(f"Attempting to store {len(vector_data)} vectors in database")
+        success = await vector_api_client.store_vectors(vector_data)
+        
+        if success:
+            logger.info(f"Successfully stored {len(vector_data)} terms in vector database")
+        else:
+            logger.error("Failed to store terms in vector database")
+            
+    except Exception as e:
+        logger.error(f"Error initializing vector database: {str(e)}", exc_info=True)
+        raise
+
 async def main():
     # Setup logging
     logger = setup_logging()
@@ -1080,12 +995,20 @@ async def main():
         OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
         PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
         
+        # Load config file
+        config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        
         logger.info("Initializing API clients...")
         vector_api_client = PineconeVectorAPIClient(
             api_key=PINECONE_API_KEY,
             environment="us-east1-gcp",
-            index_name="text2sql"
+            index_name="textsql"
         )
+        
+        # Initialize vector database with domain terms
+        await initialize_vector_db(vector_api_client, config)
         
         llm_api_client = OpenAILLMClient(
             api_key=OPEN_AI_API_KEY,
@@ -1094,12 +1017,12 @@ async def main():
         
         logger.info("Initializing QueryTranslator...")
         translator = QueryTranslator(
-            config_path=Path(BASE_PROJECT_PATH) / "src/config/schema.yaml",
+            config_path=config_path,
             vector_api_client=vector_api_client,
             llm_api_client=llm_api_client
         )
         
-        query = "What's the average credit score for customers with late payments?"
+        query = "What's the average fico score for customers with late payments?"
         logger.info(f"Processing query: {query}")
         
         sql, analysis = await translator.translate_to_sql(query)

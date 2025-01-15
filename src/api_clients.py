@@ -1,6 +1,9 @@
-from typing import List
-import aiohttp
-import asyncio
+from typing import List, Dict, Optional, Union
+import numpy as np
+from pinecone import Pinecone
+from interfaces import VectorAPIClient, VectorData, VectorSearchResult, VectorDBError
+
+
 # Example configurations for different services
 # Vector Database API Cfrom typing import Listlient Implementations
 from interfaces import VectorAPIClient, LLMAPIClient,VectorData,VectorSearchResult,LLMRequest,LLMResponse,VectorDBError
@@ -27,30 +30,56 @@ class PineconeVectorAPIClient(VectorAPIClient):
             environment: Pinecone environment (e.g., 'us-east1-gcp')
             index_name: Name of the Pinecone index to use
         """
+        from pinecone import Pinecone
+        
+        # Initialize Pinecone client
+        self.pc = Pinecone(api_key=api_key)
+        
+        # Get the index
         try:
-            # Initialize Pinecone client
-            self.pc = Pinecone(api_key=api_key)
             self.index = self.pc.Index(index_name)
         except Exception as e:
-            raise VectorDBError(f"Failed to initialize Pinecone client: {str(e)}")
+            # If index doesn't exist, create it
+            if index_name not in self.pc.list_indexes().names():
+                self.pc.create_index(
+                    name=index_name,
+                    dimension=768,  # dimension for 'all-mpnet-base-v2' model
+                    metric='cosine',
+                    spec=self.pc.ServerlessSpec(
+                        cloud='aws',
+                        region='us-west-2'
+                    )
+                )
+                self.index = self.pc.Index(index_name)
+            else:
+                raise VectorDBError(f"Failed to initialize Pinecone index: {str(e)}")
     
-    async def store_vectors(self, vectors: List[VectorData]) -> bool:
+    async def store_vectors(self, vector_data: List[VectorData]) -> bool:
         """Store vectors using Pinecone SDK"""
         try:
-            # Convert VectorData objects to Pinecone format
-            pinecone_vectors = [
-                {
-                    "id": v.id,
-                    "values": v.vector.tolist() if isinstance(v.vector, np.ndarray) else v.vector,
-                    "metadata": v.metadata
-                }
-                for v in vectors
-            ]
+            # Convert VectorData to Pinecone format
+            vectors = []
+            for data in vector_data:
+                # Ensure metadata values are valid types
+                cleaned_metadata = {}
+                for key, value in data.metadata.items():
+                    if value is not None:  # Only include non-null values
+                        if isinstance(value, (str, int, float, bool)):
+                            cleaned_metadata[key] = value
+                        elif isinstance(value, list):
+                            # Ensure all list elements are strings
+                            cleaned_metadata[key] = [str(v) for v in value if v is not None]
+                
+                vectors.append({
+                    'id': str(data.id),
+                    'values': data.vector,
+                    'metadata': cleaned_metadata
+                })
             
-            # Upsert vectors
+            # Batch upsert to Pinecone
             self.index.upsert(
-                vectors=pinecone_vectors,
-                namespace="banking-terms"  # You might want to make this configurable
+                vectors=vectors,
+                namespace="banking-terms"
             )
             return True
             
@@ -81,18 +110,22 @@ class PineconeVectorAPIClient(VectorAPIClient):
             )
             
             # Convert Pinecone response to VectorSearchResult objects
+            if not response or "matches" not in response:
+                return []
+                
             return [
                 VectorSearchResult(
                     id=match["id"],
                     score=match["score"],
-                    metadata=match["metadata"],
+                    metadata=match.get("metadata", {}),
                     vector=match.get("values")
                 )
                 for match in response["matches"]
             ]
             
         except Exception as e:
-            raise VectorDBError(f"Failed to search vectors in Pinecone: {str(e)}")
+            print(f"Error in Pinecone search: {e}")
+            return []  # Return empty list on error
 
     async def delete_vectors(
         self,
