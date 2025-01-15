@@ -1,0 +1,40 @@
+schema:
+  tables:
+    customer_credit:
+      columns:
+        customer_id: 
+          type: "integer"
+          description: "Unique identifier for customer"
+        credit_score:
+          type: "integer"
+          description: "Credit score between 300-850"
+          constraints:
+            min: 300
+            max: 850
+        risk_rating:
+          type: "string"
+          description: "Risk classification"
+          allowed_values: ["LOW", "MEDIUM", "HIGH"]
+      relationships:
+        - table: "payment_history"
+          type: "one_to_many"
+          join_conditions:
+            - "customer_credit.customer_id = payment_history.customer_id"
+
+domain_terms:
+  credit_score:
+    synonyms: ["fico score", "credit rating", "credit worthiness"]
+    abbreviations: ["cs", "fico"]
+    context_rules:
+      - when: "mortgage"
+        weight: "higher"
+      - when: "loan"
+        weight: "higher"
+
+business_rules:
+  - name: "credit_score_range"
+    condition: "credit_score BETWEEN 300 AND 850"
+    error_message: "Credit score must be between 300 and 850"
+  - name: "risk_rating_values"
+    condition: "risk_rating IN ('LOW', 'MEDIUM', 'HIGH')"
+    error_message: "Invalid risk rating value" 
