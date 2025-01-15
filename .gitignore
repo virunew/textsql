@@ -11,6 +11,8 @@ venv/
 # Jekyll
 docs/_site/
 
-
 # Mac
 .DS_Store/
+
+# Environment variables
+.env
