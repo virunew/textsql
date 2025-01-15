@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 from dataclasses import dataclass
 from interfaces import VectorAPIClient
 import logging
+from constants import VECTOR_SIMILARITY_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,9 @@ class VectorManager:
         """Find similar terms using vector similarity search"""
         try:
             results = await self.vector_api_client.search_vectors(query_embedding)
-            # Only return results above a certain score threshold
             filtered_results = [
                 result for result in results 
-                if result.score >= 0.4  # Adjust threshold as needed
+                if result.score >= VECTOR_SIMILARITY_THRESHOLD
             ]
             logger.debug(f"Vector search found {len(results)} results, {len(filtered_results)} above threshold")
             return filtered_results

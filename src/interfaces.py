@@ -102,7 +102,8 @@ class VectorAPIClient(ABC):
         query_vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         namespace: Optional[str] = None,
-        filter_metadata: Optional[Dict[str, any]] = None
+        filter_metadata: Optional[Dict[str, any]] = None,
+        score_threshold: Optional[float] = None
     ) -> List[VectorSearchResult]:
         """
         Search for similar vectors in the database.

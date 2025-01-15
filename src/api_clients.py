@@ -5,6 +5,10 @@ import numpy as np
 from pinecone import Pinecone
 import logging
 from interfaces import VectorAPIClient, VectorData, VectorSearchResult, VectorDBError
+from constants import (
+    VECTOR_NAMESPACE, VECTOR_DIMENSION, VECTOR_METRIC,
+    PINECONE_CLOUD, PINECONE_REGION, VECTOR_SIMILARITY_THRESHOLD
+)
 
 # Get logger instance
 logger = logging.getLogger(__name__)
@@ -50,11 +54,11 @@ class PineconeVectorAPIClient(VectorAPIClient):
                 logger.info(f"Creating new Pinecone index: {index_name}")
                 self.pc.create_index(
                     name=index_name,
-                    dimension=768,  # dimension for 'all-mpnet-base-v2' model
-                    metric='cosine',
+                    dimension=VECTOR_DIMENSION,
+                    metric=VECTOR_METRIC,
                     spec=self.pc.ServerlessSpec(
-                        cloud='aws',
-                        region='us-west-2'
+                        cloud=PINECONE_CLOUD,
+                        region=PINECONE_REGION
                     )
                 )
                 self.index = self.pc.Index(index_name)
@@ -63,7 +67,7 @@ class PineconeVectorAPIClient(VectorAPIClient):
                 logger.error(f"Failed to initialize Pinecone index: {str(e)}")
                 raise VectorDBError(f"Failed to initialize Pinecone index: {str(e)}")
         
-        self.namespace = "banking-terms"
+        self.namespace = VECTOR_NAMESPACE
         logger.info("PineconeVectorAPIClient initialization completed")
     
     async def store_vectors(self, vector_data: List[VectorData]) -> bool:
@@ -107,7 +111,8 @@ class PineconeVectorAPIClient(VectorAPIClient):
         query_vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         namespace: Optional[str] = None,
-        filter_metadata: Optional[Dict[str, any]] = None
+        filter_metadata: Optional[Dict[str, any]] = None,
+        score_threshold: Optional[float] = None
     ) -> List[VectorSearchResult]:
         """Search vectors using Pinecone SDK"""
         try:
@@ -117,16 +122,23 @@ class PineconeVectorAPIClient(VectorAPIClient):
             
             logger.debug(f"Searching vectors with query of dimension {len(query_vector)}")
             
-            # Perform query with lower threshold
-            response = self.index.query(
-                namespace=namespace or self.namespace,
-                vector=query_vector,
-                top_k=top_k,
-                include_values=True,
-                include_metadata=True,
-                filter=filter_metadata,
-                score_threshold=0.5  # Lower threshold for more matches
-            )
+            # Prepare query parameters
+            query_params = {
+                'namespace': namespace or self.namespace,
+                'vector': query_vector,
+                'top_k': top_k,
+                'include_values': True,
+                'include_metadata': True
+            }
+            
+            # Add optional parameters only if they are provided
+            if filter_metadata:
+                query_params['filter'] = filter_metadata
+            if score_threshold is not None:
+                query_params['score_threshold'] = score_threshold
+            
+            # Perform query
+            response = self.index.query(**query_params)
             
             logger.debug(f"Vector search response: {response}")
             

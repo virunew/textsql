@@ -20,6 +20,13 @@ from datetime import datetime
 from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient
 from api_clients import  PineconeVectorAPIClient
 from llm_clients import OpenAILLMClient
+from constants import (
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_MODEL,
+    LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
+    ENV_BASE_PROJECT_PATH, ENV_OPENAI_API_KEY, ENV_PINECONE_API_KEY,
+    PINECONE_ENVIRONMENT, SQL_EXTRACTION_PATTERNS,
+    VECTOR_DIMENSION
+)
 
 # Download required NLTK data
 try:
@@ -39,25 +46,22 @@ except LookupError:
 
 def setup_logging(log_level=logging.INFO):
     """Configure logging with a custom format"""
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    date_format = '%Y-%m-%d %H:%M:%S'
-    
     # Create logs directory if it doesn't exist
-    log_dir = Path("logs")
+    log_dir = Path(LOG_DIR)
     log_dir.mkdir(exist_ok=True)
     
     # Create a log file with timestamp
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = log_dir / f"text2sql_{timestamp}.log"
+    log_file = log_dir / f"{LOG_FILE_PREFIX}_{timestamp}.log"
     
     # Configure logging
     logging.basicConfig(
         level=log_level,
-        format=log_format,
-        datefmt=date_format,
+        format=LOG_FORMAT,
+        datefmt=LOG_DATE_FORMAT,
         handlers=[
             logging.FileHandler(log_file),
-            logging.StreamHandler()  # Also log to console
+            logging.StreamHandler()
         ]
     )
     
@@ -666,10 +670,18 @@ class QueryTranslator:
             similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
             
             if similar_terms:
-                logger.info(f"Found {len(similar_terms)} similar terms with scores: {[f'{t.metadata.get('term', 'unknown')}: {t.score:.3f}' for t in similar_terms]}")
+                term_scores = [
+                    {
+                        'term': t.metadata.get('term', 'unknown'),
+                        'score': t.score,
+                        'table': t.metadata.get('table'),
+                        'column': t.metadata.get('column')
+                    }
+                    for t in similar_terms
+                ]
+                logger.info(f"Found similar terms: {term_scores}")
             else:
                 logger.warning("No similar terms found above threshold")
-                similar_terms = []
             
             # Generate SQL
             logger.debug("Preparing LLM prompt...")
@@ -678,8 +690,8 @@ class QueryTranslator:
             logger.debug("Generating SQL using LLM...")
             llm_request = LLMRequest(
                 prompt=prompt,
-                temperature=0.3,
-                max_tokens=500,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_MAX_TOKENS,
                 additional_context={
                     "query_intent": query_intent.__dict__,
                     "similar_terms": [t.metadata for t in similar_terms] if similar_terms else [],
@@ -742,14 +754,7 @@ class QueryTranslator:
         Raises:
             QueryTranslationError: If no valid SQL found
         """
-        # Look for SQL between common delimiters
-        sql_patterns = [
-            r"```sql\n(.*?)```",  # Markdown SQL block
-            r"```(.*?)```",       # Any code block
-            r"SELECT\s+.*?;",     # Basic SQL statement (more precise)
-        ]
-        
-        for pattern in sql_patterns:
+        for pattern in SQL_EXTRACTION_PATTERNS:
             matches = re.finditer(pattern, response_text, re.DOTALL | re.IGNORECASE)
             for match in matches:
                 sql = match.group(1) if len(match.groups()) > 0 else match.group(0)
@@ -922,7 +927,24 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
     logger.info("Initializing vector database with domain terms...")
     
     try:
-        # Get domain terms from config
+        # Check if vectors already exist by doing a simple search
+        try:
+            test_query = np.zeros(VECTOR_DIMENSION)
+            logger.debug(f"Testing vector database with zero vector of dimension {VECTOR_DIMENSION}")
+            existing_vectors = await vector_api_client.search_vectors(
+                query_vector=test_query,
+                top_k=1  # Just check for any existing vectors
+            )
+            
+            if existing_vectors:
+                logger.info("Vector database already initialized")
+                return
+                
+        except Exception as e:
+            logger.error(f"Error checking vector database: {str(e)}", exc_info=True)
+            raise VectorDBError(f"Failed to check vector database: {str(e)}")
+            
+        # Continue with initialization if no vectors exist
         domain_terms = config.get('domain_terms', [])
         if not domain_terms:
             logger.warning("No domain terms found in config")
@@ -993,9 +1015,9 @@ async def main():
         logger.info("Loaded environment variables")
         
         # Get configuration
-        BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
-        OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
-        PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+        BASE_PROJECT_PATH = os.getenv(ENV_BASE_PROJECT_PATH)
+        OPEN_AI_API_KEY = os.getenv(ENV_OPENAI_API_KEY)
+        PINECONE_API_KEY = os.getenv(ENV_PINECONE_API_KEY)
         
         # Load config file
         config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"
@@ -1005,7 +1027,7 @@ async def main():
         logger.info("Initializing API clients...")
         vector_api_client = PineconeVectorAPIClient(
             api_key=PINECONE_API_KEY,
-            environment="us-east1-gcp",
+            environment=PINECONE_ENVIRONMENT,
             index_name="textsql"
         )
         
@@ -1014,7 +1036,7 @@ async def main():
         
         llm_api_client = OpenAILLMClient(
             api_key=OPEN_AI_API_KEY,
-            model="gpt-4"
+            model=LLM_MODEL
         )
         
         logger.info("Initializing QueryTranslator...")
