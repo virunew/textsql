@@ -1,8 +1,13 @@
+import asyncio
 from typing import List, Dict, Optional, Union
+import aiohttp
 import numpy as np
 from pinecone import Pinecone
+import logging
 from interfaces import VectorAPIClient, VectorData, VectorSearchResult, VectorDBError
 
+# Get logger instance
+logger = logging.getLogger(__name__)
 
 # Example configurations for different services
 # Vector Database API Cfrom typing import Listlient Implementations
@@ -30,7 +35,7 @@ class PineconeVectorAPIClient(VectorAPIClient):
             environment: Pinecone environment (e.g., 'us-east1-gcp')
             index_name: Name of the Pinecone index to use
         """
-        from pinecone import Pinecone
+        logger.info(f"Initializing PineconeVectorAPIClient with index: {index_name}")
         
         # Initialize Pinecone client
         self.pc = Pinecone(api_key=api_key)
@@ -38,9 +43,11 @@ class PineconeVectorAPIClient(VectorAPIClient):
         # Get the index
         try:
             self.index = self.pc.Index(index_name)
+            logger.info("Successfully connected to existing Pinecone index")
         except Exception as e:
             # If index doesn't exist, create it
             if index_name not in self.pc.list_indexes().names():
+                logger.info(f"Creating new Pinecone index: {index_name}")
                 self.pc.create_index(
                     name=index_name,
                     dimension=768,  # dimension for 'all-mpnet-base-v2' model
@@ -51,12 +58,19 @@ class PineconeVectorAPIClient(VectorAPIClient):
                     )
                 )
                 self.index = self.pc.Index(index_name)
+                logger.info("Successfully created new Pinecone index")
             else:
+                logger.error(f"Failed to initialize Pinecone index: {str(e)}")
                 raise VectorDBError(f"Failed to initialize Pinecone index: {str(e)}")
+        
+        self.namespace = "banking-terms"
+        logger.info("PineconeVectorAPIClient initialization completed")
     
     async def store_vectors(self, vector_data: List[VectorData]) -> bool:
         """Store vectors using Pinecone SDK"""
         try:
+            logger.info(f"Storing {len(vector_data)} vectors in Pinecone")
+            
             # Convert VectorData to Pinecone format
             vectors = []
             for data in vector_data:
@@ -79,11 +93,13 @@ class PineconeVectorAPIClient(VectorAPIClient):
             # Batch upsert to Pinecone
             self.index.upsert(
                 vectors=vectors,
-                namespace="banking-terms"
+                namespace=self.namespace
             )
+            logger.info(f"Successfully stored {len(vectors)} vectors in Pinecone")
             return True
             
         except Exception as e:
+            logger.error(f"Failed to store vectors in Pinecone: {str(e)}", exc_info=True)
             raise VectorDBError(f"Failed to store vectors in Pinecone: {str(e)}")
     
     async def search_vectors(
@@ -99,21 +115,27 @@ class PineconeVectorAPIClient(VectorAPIClient):
             if isinstance(query_vector, np.ndarray):
                 query_vector = query_vector.tolist()
             
-            # Perform query
+            logger.debug(f"Searching vectors with query of dimension {len(query_vector)}")
+            
+            # Perform query with lower threshold
             response = self.index.query(
-                namespace=namespace or "banking-terms",
+                namespace=namespace or self.namespace,
                 vector=query_vector,
                 top_k=top_k,
                 include_values=True,
                 include_metadata=True,
-                filter=filter_metadata
+                filter=filter_metadata,
+                score_threshold=0.5  # Lower threshold for more matches
             )
+            
+            logger.debug(f"Vector search response: {response}")
             
             # Convert Pinecone response to VectorSearchResult objects
             if not response or "matches" not in response:
+                logger.warning("No matches found in vector search")
                 return []
                 
-            return [
+            results = [
                 VectorSearchResult(
                     id=match["id"],
                     score=match["score"],
@@ -123,9 +145,12 @@ class PineconeVectorAPIClient(VectorAPIClient):
                 for match in response["matches"]
             ]
             
+            logger.info(f"Found {len(results)} similar terms with scores: {[r.score for r in results]}")
+            return results
+            
         except Exception as e:
-            print(f"Error in Pinecone search: {e}")
-            return []  # Return empty list on error
+            logger.error(f"Error in Pinecone search: {e}", exc_info=True)
+            return []
 
     async def delete_vectors(
         self,

@@ -664,10 +664,11 @@ class QueryTranslator:
             logger.debug("Finding similar terms...")
             query_embedding = self.semantic_analyzer.embedding_model.encode(processed_query)
             similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
-            logger.info(f"Found {len(similar_terms) if similar_terms else 0} similar terms")
             
-            if similar_terms is None:
-                logger.warning("No similar terms found, using empty list")
+            if similar_terms:
+                logger.info(f"Found {len(similar_terms)} similar terms with scores: {[f'{t.metadata.get('term', 'unknown')}: {t.score:.3f}' for t in similar_terms]}")
+            else:
+                logger.warning("No similar terms found above threshold")
                 similar_terms = []
             
             # Generate SQL
@@ -940,6 +941,7 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
             # Generate embedding for the term and its description
             text_to_embed = f"{term['term']} - {description}"
             embedding = model.encode(text_to_embed)
+            logger.debug(f"Generated embedding of dimension {len(embedding)} for term: {term['term']}")
             
             # Create metadata with only non-null values
             metadata = {
@@ -1022,7 +1024,7 @@ async def main():
             llm_api_client=llm_api_client
         )
         
-        query = "What's the average fico score for customers with late payments?"
+        query = "What's the average credit worthiness for customers with late payments?"
         logger.info(f"Processing query: {query}")
         
         sql, analysis = await translator.translate_to_sql(query)

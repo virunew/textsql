@@ -1,6 +1,10 @@
 from typing import List, Dict, Any
 from dataclasses import dataclass
 from interfaces import VectorAPIClient
+import logging
+
+logger = logging.getLogger(__name__)
+
 @dataclass
 class VectorData:
     id: str
@@ -21,10 +25,16 @@ class VectorManager:
         """Find similar terms using vector similarity search"""
         try:
             results = await self.vector_api_client.search_vectors(query_embedding)
-            return results if results is not None else []
+            # Only return results above a certain score threshold
+            filtered_results = [
+                result for result in results 
+                if result.score >= 0.4  # Adjust threshold as needed
+            ]
+            logger.debug(f"Vector search found {len(results)} results, {len(filtered_results)} above threshold")
+            return filtered_results
         except Exception as e:
-            print(f"Error in vector search: {e}")
-            return []  # Return empty list on error
+            logger.error(f"Error in vector search: {e}", exc_info=True)
+            return []
         
     async def store_term_vectors(self, terms: List[Dict[str, Any]], vectors: List[List[float]]) -> bool:
         """Store term vectors with their metadata"""
