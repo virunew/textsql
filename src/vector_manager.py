@@ -1,8 +1,12 @@
 from typing import List, Dict, Any
 from dataclasses import dataclass
-from interfaces import VectorAPIClient
+from interfaces import VectorAPIClient, LLMWareEmbeddingClient
 import logging
 from constants import VECTOR_SIMILARITY_THRESHOLD
+
+# Add llmware imports
+from llmware.models import ModelCatalog
+from llmware.embeddings import EmbeddingHandler
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,12 @@ class VectorSearchResult:
 class VectorManager:
     def __init__(self, vector_api_client: VectorAPIClient):
         self.vector_api_client = vector_api_client
+        
+    @classmethod
+    def from_llmware(cls, model_name: str, library_name: str = "default"):
+        """Create VectorManager using llmware embedding model"""
+        client = LLMWareEmbeddingClient(model_name, library_name)
+        return cls(client)
         
     async def find_similar_terms(self, query_embedding: List[float]) -> List[VectorSearchResult]:
         """Find similar terms using vector similarity search"""

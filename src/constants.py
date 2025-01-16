@@ -33,3 +33,8 @@ LOG_DIR = "logs"
 PINECONE_CLOUD = "aws"
 PINECONE_REGION = "us-west-2"
 PINECONE_ENVIRONMENT = "us-east1-gcp" 
+
+# Add llmware constants
+LLMWARE_EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Default embedding model
+LLMWARE_LLM_MODEL = "llmware/bling-1.4b-0.1"  # Default LLM model
+LLMWARE_LIBRARY = "textsql"  # Default library name 
