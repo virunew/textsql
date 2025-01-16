@@ -26,6 +26,11 @@ class VectorManager:
         """Find similar terms using vector similarity search"""
         try:
             results = await self.vector_api_client.search_vectors(query_embedding)
+            
+            # Log all scores and metadata for debugging
+            for result in results:
+                logger.debug(f"Result ID: {result.id}, Score: {result.score}, Metadata: {result.metadata}")
+            
             filtered_results = [
                 result for result in results 
                 if result.score >= VECTOR_SIMILARITY_THRESHOLD
