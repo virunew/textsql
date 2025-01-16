@@ -23,7 +23,6 @@ from llm_clients import OpenAILLMClient
 from constants import (
     LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_MODEL,
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
-    ENV_BASE_PROJECT_PATH, ENV_OPENAI_API_KEY, ENV_PINECONE_API_KEY,
     PINECONE_ENVIRONMENT, SQL_EXTRACTION_PATTERNS,
     VECTOR_DIMENSION
 )
@@ -891,6 +890,10 @@ class QueryTranslator:
                 term_str += f": {metadata['description']}"
             if 'table' in metadata:
                 term_str += f" (Table: {metadata['table']})"
+            if 'column' in metadata:
+                term_str += f" (Column: {metadata['column']})"
+            if 'synonyms' in metadata:
+                term_str += f" (Also known as: {', '.join(metadata['synonyms'])}"
             formatted_terms.append(term_str)
             
         return "\n".join(formatted_terms)
@@ -900,26 +903,6 @@ class QueryTranslationError(Exception):
     def __init__(self, message: str, original_error: Optional[Exception] = None):
         super().__init__(message)
         self.original_error = original_error
-
-# Example configuration
-config = {
-    'schema': {
-        'tables': {
-            'customer_credit': {
-                'columns': ['customer_id', 'credit_score', 'risk_rating'],
-                'relationships': [
-                    {'table': 'payment_history', 'type': 'one_to_many'}
-                ]
-            }
-        }
-    },
-    'business_rules': [
-        {
-            'name': 'credit_score_range',
-            'condition': 'credit_score BETWEEN 300 AND 850'
-        }
-    ]
-}
 
 # Example usage
 async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict):
@@ -1015,9 +998,9 @@ async def main():
         logger.info("Loaded environment variables")
         
         # Get configuration
-        BASE_PROJECT_PATH = os.getenv(ENV_BASE_PROJECT_PATH)
-        OPEN_AI_API_KEY = os.getenv(ENV_OPENAI_API_KEY)
-        PINECONE_API_KEY = os.getenv(ENV_PINECONE_API_KEY)
+        BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
+        OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
+        PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
         
         # Load config file
         config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"

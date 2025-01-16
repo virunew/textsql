@@ -26,9 +26,8 @@ LOG_FILE_PREFIX = "text2sql"
 LOG_DIR = "logs"
 
 # Environment Variables
-ENV_BASE_PROJECT_PATH = "BASE_PROJECT_PATH"
-ENV_OPENAI_API_KEY = "OPEN_AI_API_KEY"
-ENV_PINECONE_API_KEY = "PINECONE_API_KEY"
+
+
 
 # Pinecone Constants
 PINECONE_CLOUD = "aws"

@@ -201,3 +201,4 @@ class VectorManager:
     async def find_similar_terms(self, query_vector: List[float], threshold: float = 0.7) -> List[VectorSearchResult]:
         """Find similar terms using vector similarity search"""
         results = await self.api_client.search_vectors(query_vector)
+        return results
