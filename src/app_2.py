@@ -1000,7 +1000,7 @@ async def main():
         # Get configuration
         BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
         OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
-        PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+        PINECONE_API_KEY = os.getenv("¸")
         
         # Load config file
         config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"
