@@ -16,3 +16,7 @@ docs/_site/
 
 # Environment variables
 .env
+
+# Logs
+logs/
+

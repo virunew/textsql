@@ -8,9 +8,7 @@ schema:
         credit_score:
           type: "integer"
           description: "Credit score between 300-850"
-          constraints:
-            min: 300
-            max: 850
+          synonyms: ["fico score", "fico", "credit rating"]
         risk_rating:
           type: "string"
           description: "Risk classification"
@@ -22,14 +20,24 @@ schema:
             - "customer_credit.customer_id = payment_history.customer_id"
 
 domain_terms:
-  credit_score:
-    synonyms: ["fico score", "credit rating", "credit worthiness"]
-    abbreviations: ["cs", "fico"]
-    context_rules:
-      - when: "mortgage"
-        weight: "higher"
-      - when: "loan"
-        weight: "higher"
+  - term: "fico score"
+    description: "Credit score ranging from 300-850"
+    table: "customer_credit"
+    column: "credit_score"
+    synonyms: ["fico", "credit rating", "credit worthiness"]
+    
+  - term: "late payment"
+    description: "Payment made after the due date"
+    table: "payment_history"
+    column: "payment_status"
+    value: "Late"
+    synonyms: ["overdue payment", "delayed payment"]
+    
+  - term: "credit risk"
+    description: "Level of risk associated with a customer"
+    table: "customer_credit"
+    column: "risk_rating"
+    synonyms: ["risk level", "risk score"]
 
 business_rules:
   - name: "credit_score_range"
