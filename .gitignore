@@ -14,5 +14,17 @@ docs/_site/
 # Mac
 .DS_Store/
 
-# Environment variables
+# Ignore chroma_db folder
+chroma_db/
+
+# Ignore .env file
 .env
+
+# Logs
+logs/
+
+# Ignore log files
+*.log
+
+# Ignore .pyc files
+*.pyc
