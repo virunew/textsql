@@ -3,7 +3,7 @@ VECTOR_NAMESPACE = "banking-terms"
 VECTOR_DIMENSION = 768  # dimension for llmware embedding model
 VECTOR_METRIC = "cosine"
 VECTOR_SIMILARITY_THRESHOLD = 0.2
-LLMWARE_LLM_MODEL = "slim-sql-tool"  # Default LLM model for SQL generation
+LLMWARE_LLM_MODEL = "llmware/slim-sql-1b-v0"  # Default LLM model for SQL generation
 
 # LLM Constants
 LLM_TEMPERATURE = 0.0  # GGUF models don't use temperature

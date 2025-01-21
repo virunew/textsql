@@ -208,25 +208,34 @@ class LLMWareAPIClient(LLMAPIClient):
         try:
             logging.debug(f"Generating completion with prompt:\n{request.prompt}")
             
-            # Try generate_with_params first (supports more parameters)
-            if hasattr(self.model, 'generate_with_params'):
+            # Try different generation methods based on model type
+            model_type = type(self.model).__name__
+            logging.debug(f"Model type: {model_type}")
+            
+            if hasattr(self.model, 'generate_with_params'):  # GGUFGenerativeModel
                 logging.debug("Using generate_with_params")
                 response = self.model.generate_with_params(
                     prompt=request.prompt,
                     n_predict=request.max_tokens,
                     temp=request.temperature
                 )
-            # Fall back to basic generate
+            elif hasattr(self.model, 'inference'):  # HFGenerativeModel
+                logging.debug("Using inference")
+                response = self.model.inference(
+                    prompt=request.prompt,
+                )
             else:
-                logging.debug("Using basic generate")
-                response = self.model.generate(request.prompt)
+                logging.error(f"Unsupported model type: {model_type}")
+                raise AttributeError(f"Model {model_type} has no supported generation method")
             
             logging.debug(f"Raw response type: {type(response)}")
             logging.debug(f"Raw response: {response}")
             
-            # Handle different response formats
-            if isinstance(response, dict):
-                text = response.get("llm_response", response.get("text", ""))
+            # Handle different response formats based on model type
+            if model_type == "GGUFGenerativeModel":
+                text = response.get("llm_response", str(response))
+            elif model_type == "HFGenerativeModel":
+                text = response.get("generated_text", str(response))
             else:
                 text = str(response)
             
@@ -241,6 +250,7 @@ class LLMWareAPIClient(LLMAPIClient):
                 text=text,
                 metadata={
                     "model": self.model.model_name,
+                    "model_type": model_type,
                     "raw_response": text
                 }
             )

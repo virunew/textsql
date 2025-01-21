@@ -18,6 +18,30 @@ schema:
           type: "one_to_many"
           join_conditions:
             - "customer_credit.customer_id = payment_history.customer_id"
+    
+    payment_history:
+      columns:
+        payment_id:
+          type: "integer"
+          description: "Unique identifier for payment"
+        customer_id:
+          type: "integer"
+          description: "Unique identifier for customer"
+        payment_date:
+          type: "date"
+          description: "Date of the payment"
+        payment_amount:
+          type: "decimal"
+          description: "Amount of the payment"
+        payment_status:
+          type: "string"
+          description: "Status of the payment"
+          allowed_values: ["Paid", "Pending", "Late"]
+      relationships:
+        - table: "customer_credit"
+          type: "many_to_one"
+          join_conditions:
+            - "payment_history.customer_id = customer_credit.customer_id"
 
 domain_terms:
   - term: "fico score"

@@ -289,10 +289,26 @@ class SemanticAnalyzer:
         """Extract temporal context if present"""
         temporal_indicators = {
             'today': 'CURRENT_DATE',
+            'tomorrow': 'CURRENT_DATE + 1',
+            'next week': 'CURRENT_DATE + 7',
+            'next month': 'CURRENT_DATE + 30',
+            'next quarter': 'CURRENT_DATE + 90',
+            'next year': 'CURRENT_DATE + 365',
+            'today': 'CURRENT_DATE',
             'yesterday': 'CURRENT_DATE - 1',
             'this month': 'CURRENT_MONTH',
             'last month': 'PREVIOUS_MONTH',
-            'this year': 'CURRENT_YEAR'
+            'this year': 'CURRENT_YEAR',
+            'last year': 'PREVIOUS_YEAR',
+            'next week': 'CURRENT_DATE + 7',
+            'next month': 'CURRENT_DATE + 30',
+            'next quarter': 'CURRENT_DATE + 90',
+            'next year': 'CURRENT_DATE + 365',
+            'yesterday': 'CURRENT_DATE - 1',
+            'this month': 'CURRENT_MONTH',
+            'last month': 'PREVIOUS_MONTH',
+            'this year': 'CURRENT_YEAR',
+            'last year': 'PREVIOUS_YEAR'
         }
         
         query_text = ' '.join(tokens)
@@ -713,7 +729,6 @@ class QueryTranslator:
                     add_context=llm_request.additional_context.get("context"),
                     inference_dict={
                         "temperature": llm_request.temperature,
-                        "max_tokens": llm_request.max_tokens
                     }
                 )
 
