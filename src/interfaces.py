@@ -1,16 +1,14 @@
-from typing import List
-import aiohttp
-import asyncio
-# Example configurations for different services
-# Vector Database API Cfrom typing import Listlient Implementations
-
-
-from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Union, Any
+from abc import ABC, abstractmethod
 import numpy as np
 from dataclasses import dataclass
+import logging
+# Add llmware imports
+from llmware.models import ModelCatalog
+from llmware.embeddings import EmbeddingHandler
+from llmware.configs import LLMWareConfig
 
-@dataclass
+@dataclass 
 class LLMRequest:
     """
     Represents a request to an LLM API.
@@ -25,25 +23,14 @@ class LLMRequest:
     temperature: float = 0.7
     max_tokens: int = 500
     additional_context: Optional[Dict[str, Any]] = None
+    model_name: Optional[str] = None # Added to support llmware models
 
 @dataclass
 class LLMResponse:
-    """
-    Represents a response from an LLM API.
-    
-    Attributes:
-        text: The generated text response
-        metadata: Dictionary containing response metadata such as:
-            - model: The model used for generation
-            - finish_reason: Why the generation stopped
-            - usage: Token usage statistics
-            - created: Timestamp of creation
-            - message_id: Unique identifier for the response (if provided)
-            - stop_reason: Alternative finish reason for some providers
-            - deployment: Deployment information for Azure
-    """
+    """Represents a response from an LLM API"""
     text: str
     metadata: Dict[str, Any]
+    usage: Optional[Dict[str, Any]] = None  # Add usage field with default None
 
 @dataclass
 class VectorData:
@@ -102,7 +89,8 @@ class VectorAPIClient(ABC):
         query_vector: Union[List[float], np.ndarray],
         top_k: int = 10,
         namespace: Optional[str] = None,
-        filter_metadata: Optional[Dict[str, any]] = None
+        filter_metadata: Optional[Dict[str, any]] = None,
+        score_threshold: Optional[float] = None
     ) -> List[VectorSearchResult]:
         """
         Search for similar vectors in the database.
@@ -200,3 +188,96 @@ class VectorManager:
     async def find_similar_terms(self, query_vector: List[float], threshold: float = 0.7) -> List[VectorSearchResult]:
         """Find similar terms using vector similarity search"""
         results = await self.api_client.search_vectors(query_vector)
+        return results
+
+# Add new llmware client classes
+class LLMWareAPIClient(LLMAPIClient):
+    """Implementation for llmware's LLM models"""
+    
+    def __init__(self, model_name: str):
+        try:
+            self.model = ModelCatalog().load_model(model_name)
+            logging.info(f"Successfully loaded llmware model: {model_name}")
+            logging.debug(f"Model type: {type(self.model)}")
+            logging.debug(f"Available methods: {dir(self.model)}")
+        except Exception as e:
+            logging.error(f"Failed to load llmware model {model_name}: {e}")
+            raise
+        
+    async def generate_completion(self, request: LLMRequest) -> LLMResponse:
+        try:
+            logging.debug(f"Generating completion with prompt:\n{request.prompt}")
+            
+            # Try generate_with_params first (supports more parameters)
+            if hasattr(self.model, 'generate_with_params'):
+                logging.debug("Using generate_with_params")
+                response = self.model.generate_with_params(
+                    prompt=request.prompt,
+                    n_predict=request.max_tokens,
+                    temp=request.temperature
+                )
+            # Fall back to basic generate
+            else:
+                logging.debug("Using basic generate")
+                response = self.model.generate(request.prompt)
+            
+            logging.debug(f"Raw response type: {type(response)}")
+            logging.debug(f"Raw response: {response}")
+            
+            # Handle different response formats
+            if isinstance(response, dict):
+                text = response.get("llm_response", response.get("text", ""))
+            else:
+                text = str(response)
+            
+            # Clean up the response text
+            text = text.strip()
+            if text.lower().startswith("sql query:"):
+                text = text[len("sql query:"):].strip()
+            
+            logging.debug(f"Processed response text:\n{text}")
+            
+            return LLMResponse(
+                text=text,
+                metadata={
+                    "model": self.model.model_name,
+                    "raw_response": text
+                }
+            )
+        except Exception as e:
+            logging.error(f"Error generating completion with LLMWare model: {str(e)}", exc_info=True)
+            raise
+
+class LLMWareEmbeddingClient(VectorAPIClient):
+    """Implementation for llmware's embedding models"""
+    
+    def __init__(self, model_name: str, library_name: str = "default"):
+        self.model = ModelCatalog().load_model(model_name)
+        self.embedding_handler = EmbeddingHandler(library_name)
+        
+    async def store_vectors(self, vectors: List[VectorData]) -> bool:
+        try:
+            # Convert to llmware format
+            llmware_vectors = [{
+                "id": v.id,
+                "vector": v.vector,
+                "metadata": v.metadata
+            } for v in vectors]
+            
+            return await self.embedding_handler.store_vectors(llmware_vectors)
+        except Exception as e:
+            logging.error(f"Error storing vectors: {e}")
+            return False
+            
+    async def search_vectors(self, query_vector, **kwargs) -> List[VectorSearchResult]:
+        results = await self.embedding_handler.search_vectors(
+            query_vector,
+            top_k=kwargs.get("top_k", 10)
+        )
+        return [
+            VectorSearchResult(
+                id=r["id"],
+                score=r["score"],
+                metadata=r["metadata"]
+            ) for r in results
+        ]

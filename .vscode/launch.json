@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "main", // Replace with your main module if needed
+            "justMyCode": false, // Set to false to include all source files
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/llmware",
+                    "remoteRoot": "./llmware"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/src",
+                    "remoteRoot": "./src"
+                }
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/llmware:${workspaceFolder}/src" // Add to PYTHONPATH
+            },
+            "cwd": "${workspaceFolder}", // Set the current working directory
+            "stopOnEntry": false
+        }
+    ]
+}

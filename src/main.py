@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import os
 import aiohttp
 import asyncio
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple, Set, Any
 import numpy as np
 from dataclasses import dataclass
 import yaml
@@ -16,16 +16,24 @@ from sqlparse.sql import Where, Comparison
 import nltk
 import logging
 from datetime import datetime
+from config import config
 
-from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient
-from api_clients import  PineconeVectorAPIClient
+from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient, LLMWareAPIClient, LLMWareEmbeddingClient
+from api_clients import  PineconeVectorAPIClient, ChromaVectorAPIClient
 from llm_clients import OpenAILLMClient
 from constants import (
-    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_MODEL,
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, 
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
-    PINECONE_ENVIRONMENT, SQL_EXTRACTION_PATTERNS,
-    VECTOR_DIMENSION
+    SQL_EXTRACTION_PATTERNS,
+    VECTOR_DIMENSION,
+    LLMWARE_LLM_MODEL
 )
+
+# Configure logging before importing models
+logging.basicConfig(level=config.get_logging_level_by_module('models'))
+
+# Now import the model
+from llmware.models import GGUFGenerativeModel
 
 # Download required NLTK data
 try:
@@ -698,7 +706,39 @@ class QueryTranslator:
                 }
             )
             
-            llm_response = await self.llm_client.generate_completion(llm_request)
+            if isinstance(self.llm_client, LLMWareAPIClient) and isinstance(self.llm_client.model, GGUFGenerativeModel):
+                # For GGUF models, use inference directly
+                response_text = self.llm_client.model.inference(
+                    prompt=llm_request.prompt,
+                    add_context=llm_request.additional_context.get("context"),
+                    inference_dict={
+                        "temperature": llm_request.temperature,
+                        "max_tokens": llm_request.max_tokens
+                    }
+                )
+
+                # Handle dictionary response from GGUF model
+                if isinstance(response_text, dict):
+                    response_text = response_text.get("llm_response", "")
+
+                llm_response = LLMResponse(
+                    text=response_text,
+                    metadata={
+                        "model": self.llm_client.model.model_name,
+                        "raw_response": response_text,
+                        "finish_reason": "completed",
+                        "created": datetime.now().isoformat()
+                    },
+                    usage={
+                        "prompt_tokens": self.llm_client.model.usage.get("input", 0),
+                        "completion_tokens": self.llm_client.model.usage.get("output", 0),
+                        "total_tokens": self.llm_client.model.usage.get("total", 0)
+                    }
+                )
+            else:
+                # For other LLM clients, use generate_completion
+                llm_response = await self.llm_client.generate_completion(llm_request)
+            
             logger.debug("Received LLM response")
             
             # Extract and validate SQL
@@ -741,37 +781,42 @@ class QueryTranslator:
             raise QueryTranslationError(f"Error in query translation pipeline: {str(e)}")
     
     def _extract_sql_from_response(self, response_text: str) -> str:
-        """
-        Extract SQL query from LLM response text.
+        """Extract SQL query from LLM response"""
+        if not response_text:
+            raise QueryTranslationError("Empty response from LLM")
         
-        Args:
-            response_text: Raw response from LLM
-            
-        Returns:
-            str: Extracted SQL query
-            
-        Raises:
-            QueryTranslationError: If no valid SQL found
-        """
+        # Handle if response_text is a dictionary
+        if isinstance(response_text, dict):
+            response_text = response_text.get("llm_response", "")
+        
+        # Log the raw response for debugging
+        logger.debug(f"Extracting SQL from response:\n{response_text}")
+        
+        # Try different patterns to extract SQL
         for pattern in SQL_EXTRACTION_PATTERNS:
-            matches = re.finditer(pattern, response_text, re.DOTALL | re.IGNORECASE)
+            matches = re.finditer(pattern, response_text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
             for match in matches:
                 sql = match.group(1) if len(match.groups()) > 0 else match.group(0)
                 sql = sql.strip()
-                if sql.upper().startswith("SELECT"):
-                    # Basic validation of SQL structure
-                    if "FROM" in sql.upper() and sql.strip().endswith(";"):
-                        return sql
+                if sql:
+                    # Validate the extracted SQL
+                    try:
+                        parsed = sqlparse.parse(sql)
+                        if parsed and len(parsed) > 0:
+                            logger.debug(f"Successfully extracted SQL: {sql}")
+                            return sql
+                    except Exception as e:
+                        logger.warning(f"Failed to parse extracted SQL: {e}")
+                        continue
         
-        # If we get here, try to extract any SELECT statement
-        if "SELECT" in response_text.upper() and "FROM" in response_text.upper():
-            # Extract everything between SELECT and the next period or end of string
-            match = re.search(r"SELECT.*?(?:;|$)", response_text, re.DOTALL | re.IGNORECASE)
-            if match:
-                sql = match.group(0).strip()
-                if not sql.endswith(";"):
-                    sql += ";"
-                return sql
+        # If no SQL found in patterns, check if the entire response is a valid SQL query
+        try:
+            parsed = sqlparse.parse(response_text)
+            if parsed and len(parsed) > 0 and parsed[0].get_type() == 'SELECT':
+                logger.debug("Using full response as SQL query")
+                return response_text.strip()
+        except Exception as e:
+            logger.warning(f"Failed to parse full response as SQL: {e}")
         
         raise QueryTranslationError("No valid SQL query found in LLM response")
     
@@ -878,24 +923,22 @@ class QueryTranslator:
         return "\n\n".join(context_parts)
     
     def _format_similar_terms(self, similar_terms: List[VectorSearchResult]) -> str:
-        """Format similar terms for prompt inclusion"""
-        if not similar_terms:
-            return "No similar terms found."
-            
+        """Format similar terms for the prompt"""
         formatted_terms = []
-        for term in similar_terms[:5]:  # Limit to top 5 terms
+        for term in similar_terms:
             metadata = term.metadata
-            term_str = f"- {metadata.get('term', 'Unknown Term')}"
-            if 'description' in metadata:
-                term_str += f": {metadata['description']}"
-            if 'table' in metadata:
-                term_str += f" (Table: {metadata['table']})"
-            if 'column' in metadata:
-                term_str += f" (Column: {metadata['column']})"
-            if 'synonyms' in metadata:
-                term_str += f" (Also known as: {', '.join(metadata['synonyms'])}"
-            formatted_terms.append(term_str)
+            synonyms = metadata.get('synonyms', '')
+            if isinstance(synonyms, str):
+                synonyms = synonyms.split(',')
             
+            term_info = (
+                f"- {metadata.get('term', '')}: {metadata.get('description', '')} "
+                f"(Table: {metadata.get('table', '')}) "
+                f"(Column: {metadata.get('column', '')}) "
+                f"(Also known as: {', '.join(s.strip() for s in synonyms if s.strip())})"
+            )
+            formatted_terms.append(term_info)
+        
         return "\n".join(formatted_terms)
 
 class QueryTranslationError(Exception):
@@ -987,7 +1030,7 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
 
 async def main():
     # Setup logging
-    logger = setup_logging()
+    logger = setup_logging(logging.DEBUG)
     logger.info("Starting Text-to-SQL application")
     
     try:
@@ -1008,19 +1051,19 @@ async def main():
             config = yaml.safe_load(f)
         
         logger.info("Initializing API clients...")
-        vector_api_client = PineconeVectorAPIClient(
-            api_key=PINECONE_API_KEY,
-            environment=PINECONE_ENVIRONMENT,
-            index_name="textsql"
+        
+        # Initialize ChromaDB vector store
+        vector_api_client = ChromaVectorAPIClient(
+            collection_name="banking_terms"
+        )
+        
+        # Initialize llmware LLM client
+        llm_api_client = LLMWareAPIClient(
+            model_name=LLMWARE_LLM_MODEL
         )
         
         # Initialize vector database with domain terms
         await initialize_vector_db(vector_api_client, config)
-        
-        llm_api_client = OpenAILLMClient(
-            api_key=OPEN_AI_API_KEY,
-            model=LLM_MODEL
-        )
         
         logger.info("Initializing QueryTranslator...")
         translator = QueryTranslator(
