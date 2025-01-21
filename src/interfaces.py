@@ -30,6 +30,7 @@ class LLMResponse:
     """Represents a response from an LLM API"""
     text: str
     metadata: Dict[str, Any]
+    usage: Optional[Dict[str, Any]] = None  # Add usage field with default None
 
 @dataclass
 class VectorData:
@@ -194,21 +195,58 @@ class LLMWareAPIClient(LLMAPIClient):
     """Implementation for llmware's LLM models"""
     
     def __init__(self, model_name: str):
-        self.model = ModelCatalog().load_model(model_name)
+        try:
+            self.model = ModelCatalog().load_model(model_name)
+            logging.info(f"Successfully loaded llmware model: {model_name}")
+            logging.debug(f"Model type: {type(self.model)}")
+            logging.debug(f"Available methods: {dir(self.model)}")
+        except Exception as e:
+            logging.error(f"Failed to load llmware model {model_name}: {e}")
+            raise
         
     async def generate_completion(self, request: LLMRequest) -> LLMResponse:
-        response = self.model.generate(
-            request.prompt,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens
-        )
-        return LLMResponse(
-            text=response["llm_response"],
-            metadata={
-                "model": self.model.model_name,
-                "usage": response.get("usage", {})
-            }
-        )
+        try:
+            logging.debug(f"Generating completion with prompt:\n{request.prompt}")
+            
+            # Try generate_with_params first (supports more parameters)
+            if hasattr(self.model, 'generate_with_params'):
+                logging.debug("Using generate_with_params")
+                response = self.model.generate_with_params(
+                    prompt=request.prompt,
+                    n_predict=request.max_tokens,
+                    temp=request.temperature
+                )
+            # Fall back to basic generate
+            else:
+                logging.debug("Using basic generate")
+                response = self.model.generate(request.prompt)
+            
+            logging.debug(f"Raw response type: {type(response)}")
+            logging.debug(f"Raw response: {response}")
+            
+            # Handle different response formats
+            if isinstance(response, dict):
+                text = response.get("llm_response", response.get("text", ""))
+            else:
+                text = str(response)
+            
+            # Clean up the response text
+            text = text.strip()
+            if text.lower().startswith("sql query:"):
+                text = text[len("sql query:"):].strip()
+            
+            logging.debug(f"Processed response text:\n{text}")
+            
+            return LLMResponse(
+                text=text,
+                metadata={
+                    "model": self.model.model_name,
+                    "raw_response": text
+                }
+            )
+        except Exception as e:
+            logging.error(f"Error generating completion with LLMWare model: {str(e)}", exc_info=True)
+            raise
 
 class LLMWareEmbeddingClient(VectorAPIClient):
     """Implementation for llmware's embedding models"""

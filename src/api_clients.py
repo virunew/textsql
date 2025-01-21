@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Any
 import aiohttp
 import numpy as np
 from pinecone import Pinecone
@@ -7,8 +7,11 @@ import logging
 from interfaces import VectorAPIClient, VectorData, VectorSearchResult, VectorDBError
 from constants import (
     VECTOR_NAMESPACE, VECTOR_DIMENSION, VECTOR_METRIC,
-    PINECONE_CLOUD, PINECONE_REGION, VECTOR_SIMILARITY_THRESHOLD
+    PINECONE_CLOUD, PINECONE_REGION, VECTOR_SIMILARITY_THRESHOLD,
+    CHROMA_PERSIST_DIR
 )
+import chromadb
+from chromadb.config import Settings
 
 # Get logger instance
 logger = logging.getLogger(__name__)
@@ -392,5 +395,111 @@ config = {
     }
 }
 
+class ChromaVectorAPIClient(VectorAPIClient):
+    """ChromaDB implementation of the VectorAPIClient interface"""
+    
+    def __init__(self, collection_name: str = "banking_terms"):
+        """Initialize ChromaDB client"""
+        logger.info(f"Initializing ChromaDB with collection: {collection_name}")
+        
+        # Initialize ChromaDB client with persistence
+        self.client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+        
+        # Get or create collection
+        try:
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                metadata={"description": "Banking terms vector store"}
+            )
+            logger.info("Successfully connected to ChromaDB collection")
+        except Exception as e:
+            logger.error(f"Failed to initialize ChromaDB collection: {str(e)}")
+            raise
+    
+    async def store_vectors(self, vectors: List[VectorData]) -> bool:
+        """Store vectors in ChromaDB"""
+        try:
+            # Convert to ChromaDB format
+            ids = [v.id for v in vectors]
+            embeddings = [v.vector for v in vectors]
+            
+            # Convert lists in metadata to strings to meet ChromaDB requirements
+            metadatas = []
+            for v in vectors:
+                processed_metadata = {}
+                for key, value in v.metadata.items():
+                    if key == "synonyms" and isinstance(value, list):
+                        # Keep synonyms as comma-separated words
+                        processed_metadata[key] = ", ".join(value)
+                    elif isinstance(value, list):
+                        processed_metadata[key] = ", ".join(str(x) for x in value)
+                    else:
+                        processed_metadata[key] = value
+                metadatas.append(processed_metadata)
+            
+            # Add to collection
+            self.collection.add(
+                ids=ids,
+                embeddings=embeddings,
+                metadatas=metadatas
+            )
+            logger.info(f"Successfully stored {len(vectors)} vectors in ChromaDB")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing vectors in ChromaDB: {e}")
+            return False
+    
+    async def search_vectors(
+        self,
+        query_vector: List[float],
+        top_k: int = 10,
+        namespace: Optional[str] = None,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None
+    ) -> List[VectorSearchResult]:
+        """Search vectors in ChromaDB"""
+        try:
+            results = self.collection.query(
+                query_embeddings=[query_vector],
+                n_results=top_k,
+                where=filter_metadata
+            )
+            
+            # Convert to VectorSearchResult format
+            vector_results = []
+            for i, (id_, distance, metadata) in enumerate(zip(
+                results['ids'][0],
+                results['distances'][0],
+                results['metadatas'][0]
+            )):
+                # Convert distance to similarity score (ChromaDB returns L2 distance)
+                similarity_score = 1 / (1 + distance)
+                
+                if score_threshold and similarity_score < score_threshold:
+                    continue
+                    
+                vector_results.append(VectorSearchResult(
+                    id=id_,
+                    score=similarity_score,
+                    metadata=metadata
+                ))
+            
+            return vector_results
+            
+        except Exception as e:
+            logger.error(f"Error searching vectors in ChromaDB: {e}")
+            return []
+
+
+    async def delete_vectors(self, vector_ids: List[str], namespace: Optional[str] = None) -> bool:
+        """Delete vectors from ChromaDB"""
+        try:
+            self.collection.delete(ids=vector_ids)
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting vectors in ChromaDB: {e}")
+            return False
+        
 if __name__ == "__main__":
     asyncio.run(main())
