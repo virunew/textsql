@@ -15,7 +15,10 @@
                 {
                     "localRoot": "${workspaceFolder}/src",
                     "remoteRoot": "./src"
-                }
+                },
+
+
+                
             ],
             "console": "integratedTerminal",
             "env": {
@@ -23,6 +26,22 @@
             },
             "cwd": "${workspaceFolder}", // Set the current working directory
             "stopOnEntry": false
+        },
+        {
+            "name": "Python: Run Tests",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests", // Specify the tests folder
+                "-v" // Verbose output
+            ],
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/llmware:${workspaceFolder}/src::${workspaceFolder}/tests"
+            },
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
