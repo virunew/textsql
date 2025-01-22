@@ -185,7 +185,13 @@ class SemanticAnalyzer:
     
     def __init__(self, config: dict):
         self.config = config
-        self.embedding_model = SentenceTransformer('all-mpnet-base-v2')
+        hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        self.embedding_model = HFEmbeddingModel(
+            model=hf_model, 
+            tokenizer=hf_tokenizer, 
+            model_name=LLMWARE_EMBEDDING_MODEL
+        )
         self.term_patterns = self._compile_term_patterns()
         
     def _compile_term_patterns(self) -> Dict[str, re.Pattern]:
@@ -216,23 +222,20 @@ class SemanticAnalyzer:
         Returns:
             QueryIntent object with analysis results
         """
-        # Tokenize query
-        tokens = word_tokenize(query.lower())
+        embedding = self.embedding_model.embedding(query)
+        if len(embedding.shape) == 2:
+            embedding = embedding[0]  # Take the first vector if it's a batch
+        embedding = embedding.flatten().tolist()  # Convert to list of floats
         
-        # Identify action type and aggregation
+        tokens = word_tokenize(query.lower())
         action_type = self._determine_action_type(tokens)
         aggregation_type = self._determine_aggregation(tokens)
-        
-        # Extract main entities (using compiled patterns)
         main_entities = []
         for term, pattern in self.term_patterns.items():
             if pattern.search(query):
                 main_entities.append(term)
         
-        # Extract conditions
         conditions = self._extract_conditions(query, context)
-        
-        # Determine temporal context if any
         temporal_context = self._extract_temporal_context(tokens)
         
         return QueryIntent(
@@ -693,7 +696,10 @@ class QueryTranslator:
             
             # Find similar terms
             logger.debug("Finding similar terms...")
-            query_embedding = self.semantic_analyzer.embedding_model.encode(processed_query)
+            query_embedding = self.semantic_analyzer.embedding_model.embedding(processed_query)
+            if len(query_embedding.shape) == 2:
+                query_embedding = query_embedding[0]  # Take the first vector if it's a batch
+            query_embedding = query_embedding.flatten().tolist()  # Convert to list of floats
             similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
             
             if similar_terms:
