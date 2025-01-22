@@ -719,7 +719,7 @@ class QueryTranslator:
             # Generate SQL
             logger.debug("Preparing LLM prompt...")
             prompt = self._prepare_llm_prompt(processed_query, query_intent, similar_terms)
-            
+            logger.debug(f"LLM prompt: {prompt}")
             logger.debug("Generating SQL using LLM...")
             llm_request = LLMRequest(
                 prompt=prompt,
@@ -888,6 +888,7 @@ class QueryTranslator:
         2. Implements the identified aggregations and conditions
         3. Follows standard SQL best practices
         4. Includes appropriate JOIN conditions if multiple tables are needed
+        5. Use the least number of joins and conditions to achieve the desired result
         
         SQL Query:
         """
