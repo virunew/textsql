@@ -188,8 +188,8 @@ class SemanticAnalyzer:
         hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         self.embedding_model = HFEmbeddingModel(
-            model=hf_model, 
-            tokenizer=hf_tokenizer, 
+            model=hf_model,
+            tokenizer=hf_tokenizer,
             model_name=LLMWARE_EMBEDDING_MODEL
         )
         self.term_patterns = self._compile_term_patterns()
@@ -226,7 +226,7 @@ class SemanticAnalyzer:
         if len(embedding.shape) == 2:
             embedding = embedding[0]  # Take the first vector if it's a batch
         embedding = embedding.flatten().tolist()  # Convert to list of floats
-        
+
         tokens = word_tokenize(query.lower())
         action_type = self._determine_action_type(tokens)
         aggregation_type = self._determine_aggregation(tokens)
@@ -234,7 +234,7 @@ class SemanticAnalyzer:
         for term, pattern in self.term_patterns.items():
             if pattern.search(query):
                 main_entities.append(term)
-        
+
         conditions = self._extract_conditions(query, context)
         temporal_context = self._extract_temporal_context(tokens)
         
@@ -1007,16 +1007,17 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer, model_name=LLMWARE_EMBEDDING_MODEL)
-        
+
         for term in domain_terms:
             description = term['description']
             if 'synonyms' in term:
-            
+                description += f" (Also known as: {', '.join(term['synonyms'])})"
+
             text_to_embed = f"{term['term']} - {description}"
-            
+
             # Get embedding and properly format it
             embedding = model.embedding(text_to_embed)
-            
+
             # Convert the embedding to the correct format
             # If embedding is a 2D array with shape (1, dimension)
             if len(embedding.shape) == 2:
@@ -1024,14 +1025,14 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
             
             # Convert to list of floats
             embedding_list = embedding.flatten().tolist()
-            
+
             # Create metadata
             metadata = {
                 'term': term['term'],
                 'description': term['description'],
                 'synonyms': term.get('synonyms', [])
             }
-            
+
             if term.get('table'):
                 metadata['table'] = term['table']
             if term.get('column'):
@@ -1112,19 +1113,19 @@ async def main():
             "Find customers except those with high risk",
             "List customers with a payment history of less than 1 year",
             "Show payments that are overdue by more than 2 months?",
-       
+
             '''Can you please show me a detailed analysis of all customers who have a credit score 
             above 700 and have made at least 3 payments on time but also had exactly one late 
             payment in the past year, and sort them by their risk rating in descending order 
             while also calculating their average payment amount?'''
         ]
-        
+
         for query in queries:
             logger.info(f"Processing query: {query}")
             sql, analysis = await translator.translate_to_sql(query)
             logger.info(f"Generated SQL: {sql}")
             logger.debug(f"Analysis: {analysis}")
-            
+
             print(f"Generated SQL for query '{query}': {sql}")
             print(f"Analysis: {analysis}")
             print("\n\n\n\n\n")
