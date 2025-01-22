@@ -997,42 +997,35 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         
         # Create vector data for each term
         vector_data = []
-        #model = SentenceTransformer('all-mpnet-base-v2')
         hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
-
-    #   pass instantiated HF model and tokenizer to HFEmbeddingModel class
-        model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer,model_name=LLMWARE_EMBEDDING_MODEL, api_key=HUGGINGFACE_TOKEN)
-
-
+        model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer, model_name=LLMWARE_EMBEDDING_MODEL)
+        
         for term in domain_terms:
-            # Create description that includes synonyms
             description = term['description']
             if 'synonyms' in term:
-            
                 description += f" (Also known as: {', '.join(term['synonyms'])})"
-            # Generate embedding for the term and its description
-            text_to_embed = f"{term['term']} - {description}"
-           # embedding = model.encode(text_to_embed)
-
-        
-            # # Tokenize and generate embeddings
-            # inputs = model.tokenizer(text_to_embed, return_tensors='pt', padding=True, truncation=True)
-            # with torch.no_grad():
-            #     outputs = model(**inputs)
-            #     embedding = outputs.last_hidden_state[:, 0]  # Adjust based on your needs
-
-            embedding = model.embedding(text_to_embed)            
-            logger.debug(f"Generated embedding of dimension {len(embedding)} for term: {term['term']}")
             
-            # Create metadata with only non-null values
+            text_to_embed = f"{term['term']} - {description}"
+            
+            # Get embedding and properly format it
+            embedding = model.embedding(text_to_embed)
+            
+            # Convert the embedding to the correct format
+            # If embedding is a 2D array with shape (1, dimension)
+            if len(embedding.shape) == 2:
+                embedding = embedding[0]  # Take the first (and only) vector
+            
+            # Convert to list of floats
+            embedding_list = embedding.flatten().tolist()
+            
+            # Create metadata
             metadata = {
                 'term': term['term'],
                 'description': term['description'],
                 'synonyms': term.get('synonyms', [])
             }
             
-            # Add optional fields only if they exist and are not None
             if term.get('table'):
                 metadata['table'] = term['table']
             if term.get('column'):
@@ -1040,14 +1033,14 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
             if term.get('value'):
                 metadata['value'] = term['value']
             
-            # Create vector data
+            # Create vector data with properly formatted embedding
             vector_data.append(VectorData(
                 id=f"term_{term['term'].replace(' ', '_')}",
-                vector=embedding.tolist(),  # Convert numpy array to list
+                vector=embedding_list,  # Use the properly formatted embedding
                 metadata=metadata
             ))
             
-            logger.debug(f"Created vector data for term: {term['term']}")
+            logger.debug(f"Created vector data for term: {term['term']} with embedding dimension {len(embedding_list)}")
         
         # Store vectors in database
         logger.info(f"Attempting to store {len(vector_data)} vectors in database")
