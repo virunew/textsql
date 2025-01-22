@@ -3,8 +3,8 @@ VECTOR_NAMESPACE = "banking-terms"
 VECTOR_DIMENSION = 768  # dimension for llmware embedding model
 VECTOR_METRIC = "cosine"
 VECTOR_SIMILARITY_THRESHOLD = 0.2
-#LLMWARE_LLM_MODEL = "llmware/slim-sql-1b-v0"  clearcl
-LLMWARE_LLM_MODEL = "llmware/dragon-mistral-7b-v0"   
+LLMWARE_LLM_MODEL = "llmware/slim-sql-1b-v0"  
+#LLMWARE_LLM_MODEL = "llmware/dragon-mistral-7b-v0"   
 LLMWARE_EMBEDDING_MODEL = "llmware/industry-bert-loans"   
 # LLM Constants
 LLM_TEMPERATURE = 0.0  # GGUF models don't use temperature

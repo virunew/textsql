@@ -5,6 +5,7 @@ from constants import LLMWARE_LLM_MODEL
 from src.main import QueryTranslator, setup_logging
 from src.interfaces import LLMWareAPIClient
 from src.api_clients import ChromaVectorAPIClient
+from tests.sql_equivalence_checker import SQLEquivalenceChecker  # Import the SQLEquivalenceChecker
 import logging
 import yaml
 from pathlib import Path
@@ -37,11 +38,19 @@ async def translator():
     
     return translator
 
+# Initialize the SQL Equivalence Checker
+@pytest_asyncio.fixture
+async def equivalence_checker():
+    """Initialize SQLEquivalenceChecker with a mock database connection"""
+    # You can set up a mock database connection here if needed
+    db_connection = None  # Replace with actual connection if needed
+    checker = SQLEquivalenceChecker(db_connection)
+    return checker
+
 # Basic SQL Query Tests
 @pytest.mark.asyncio
-async def test_simple_select(translator):
+async def test_simple_select(translator, equivalence_checker):
     """Test simple SELECT queries"""
-    translator = translator
     test_cases = [
         (
             "Show me all customer credit scores",
@@ -59,12 +68,14 @@ async def test_simple_select(translator):
     
     for query, expected_sql in test_cases:
         sql, _ = await translator.translate_to_sql(query)
-        assert sql.strip().lower() == expected_sql.strip().lower()
+        print("sql", str(sql))
+        result = equivalence_checker.check_equivalence(sql, expected_sql)
+        print("result", str(result))
+        assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 @pytest.mark.asyncio
-async def test_where_clauses(translator):
+async def test_where_clauses(translator, equivalence_checker):
     """Test WHERE clause variations"""
-    translator = translator
     test_cases = [
         (
             "Find customers with credit score above 700",
@@ -82,12 +93,13 @@ async def test_where_clauses(translator):
     
     for query, expected_sql in test_cases:
         sql, _ = await translator.translate_to_sql(query)
-        assert sql.strip().lower() == expected_sql.strip().lower()
+        result = equivalence_checker.check_equivalence(sql, expected_sql)
+        print("result", str(result))
+        assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 @pytest.mark.asyncio
-async def test_joins(translator):
+async def test_joins(translator, equivalence_checker):
     """Test JOIN operations"""
-    translator = translator
     test_cases = [
         (
             "Show credit scores and payment history for all customers",
@@ -110,12 +122,14 @@ async def test_joins(translator):
     
     for query, expected_sql in test_cases:
         sql, _ = await translator.translate_to_sql(query)
-        assert sql.strip().lower() == expected_sql.strip().lower()
+        print("sql", str(sql))
+        result = equivalence_checker.check_equivalence(sql, expected_sql)
+        print("result", str(result))
+        assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 @pytest.mark.asyncio
-async def test_aggregations(translator):
+async def test_aggregations(translator, equivalence_checker):
     """Test GROUP BY and aggregate functions"""
-    translator = translator
     test_cases = [
         (
             "What is the average credit score by risk rating?",
@@ -137,13 +151,14 @@ async def test_aggregations(translator):
     
     for query, expected_sql in test_cases:
         sql, _ = await translator.translate_to_sql(query)
-        assert sql.strip().lower() == expected_sql.strip().lower()
+        result = equivalence_checker.check_equivalence(sql, expected_sql)
+        print("result", str(result))
+        assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 # Natural Language Understanding Tests
 @pytest.mark.asyncio
-async def test_synonyms(translator):
+async def test_synonyms(translator, equivalence_checker):
     """Test handling of synonyms"""
-    translator = translator
     synonyms = [
         (
             "What is the credit worthiness of customers?",
@@ -160,12 +175,17 @@ async def test_synonyms(translator):
     for query1, query2, expected_sql in synonyms:
         sql1, _ = await translator.translate_to_sql(query1)
         sql2, _ = await translator.translate_to_sql(query2)
-        assert sql1.strip().lower() == sql2.strip().lower() == expected_sql.strip().lower()
+        print("sql1", str(sql1))
+        print("sql2", str(sql2))
+        result1 = equivalence_checker.check_equivalence(sql1, expected_sql)
+        result2 = equivalence_checker.check_equivalence(sql2, expected_sql)
+        print("result1", str(result1))
+        print("result2", str(result2))
+        assert result1['equivalent'] and result2['equivalent'], f"Differences found: {result1['overall_differences']} and {result2['overall_differences']}"
 
 @pytest.mark.asyncio
-async def test_negations(translator):
+async def test_negations(translator, equivalence_checker):
     """Test handling of negations"""
-    translator = translator
     test_cases = [
         (
             "Show customers who don't have late payments",
@@ -184,14 +204,16 @@ async def test_negations(translator):
     
     for query, expected_sql in test_cases:
         sql, _ = await translator.translate_to_sql(query)
-        assert sql.strip().lower() == expected_sql.strip().lower()
+        print("sql", str(sql))
+        result = equivalence_checker.check_equivalence(sql, expected_sql)
+        print("result", str(result))
+        assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 # Edge Cases Tests
 @pytest.mark.asyncio
-async def test_edge_cases(translator):
+async def test_edge_cases(translator, equivalence_checker):
     """Test various edge cases"""
     
-    translator = translator
     # Empty input
     with pytest.raises(ValueError):
         await translator.translate_to_sql("")
@@ -202,7 +224,8 @@ async def test_edge_cases(translator):
     
     # Misspelled words should still work
     sql, _ = await translator.translate_to_sql("Show me credit scors")
-    assert "SELECT" in sql.upper() and "credit_score" in sql.lower()
+    result = equivalence_checker.check_equivalence(sql, "SELECT * FROM customer_credit WHERE credit_score IS NOT NULL")
+    assert result['equivalent'], f"Differences found: {result['overall_differences']}"
     
     # Very long query
     long_query = """
@@ -212,12 +235,14 @@ async def test_edge_cases(translator):
     while also calculating their average payment amount?
     """
     sql, _ = await translator.translate_to_sql(long_query)
-    assert "SELECT" in sql.upper() and "JOIN" in sql.upper()
+    print("sql", str(sql))
+    result = equivalence_checker.check_equivalence(sql, "SELECT * FROM customer_credit WHERE credit_score > 700")
+    print("result", str(result ))
+    assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 @pytest.mark.asyncio
-async def test_complex_conditions(translator):
+async def test_complex_conditions(translator, equivalence_checker):
     """Test complex conditional queries"""
-    translator = translator
     test_cases = [
         (
             "Find customers with credit score between 600 and 750",
@@ -248,7 +273,10 @@ async def test_complex_conditions(translator):
     
     for query, expected_sql in test_cases:
         sql, _ = await translator.translate_to_sql(query)
-        assert sql.strip().lower() == expected_sql.strip().lower()
+        print("sql", str(sql))
+        result = equivalence_checker.check_equivalence(sql, expected_sql)
+        print("result", str(result))
+        assert result['equivalent'], f"Differences found: {result['overall_differences']}"
 
 if __name__ == "__main__":
     pytest.main(["-v", "test_sql_generation.py"]) 
