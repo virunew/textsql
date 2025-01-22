@@ -1011,7 +1011,6 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         for term in domain_terms:
             description = term['description']
             if 'synonyms' in term:
-                description += f" (Also known as: {', '.join(term['synonyms'])})"
             
             text_to_embed = f"{term['term']} - {description}"
             
