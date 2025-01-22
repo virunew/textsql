@@ -5,10 +5,12 @@ import asyncio
 from typing import List, Dict, Optional, Tuple, Set, Any
 import numpy as np
 from dataclasses import dataclass
+import torch
 import yaml
 from pathlib import Path
 import re
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModel
 from nltk.tokenize import word_tokenize
 from nltk.corpus import wordnet
 import sqlparse
@@ -22,18 +24,20 @@ from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIC
 from api_clients import  PineconeVectorAPIClient, ChromaVectorAPIClient
 from llm_clients import OpenAILLMClient
 from constants import (
-    LLM_TEMPERATURE, LLM_MAX_TOKENS, 
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLMWARE_EMBEDDING_MODEL, 
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
     SQL_EXTRACTION_PATTERNS,
     VECTOR_DIMENSION,
     LLMWARE_LLM_MODEL
 )
 
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+
 # Configure logging before importing models
 logging.basicConfig(level=config.get_logging_level_by_module('models'))
 
 # Now import the model
-from llmware.models import GGUFGenerativeModel
+from llmware.models import GGUFGenerativeModel, HFEmbeddingModel, ModelCatalog
 
 # Download required NLTK data
 try:
@@ -993,17 +997,32 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         
         # Create vector data for each term
         vector_data = []
-        model = SentenceTransformer('all-mpnet-base-v2')
-        
+        #model = SentenceTransformer('all-mpnet-base-v2')
+        hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+
+    #   pass instantiated HF model and tokenizer to HFEmbeddingModel class
+        model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer,model_name=LLMWARE_EMBEDDING_MODEL, api_key=HUGGINGFACE_TOKEN)
+
+
         for term in domain_terms:
             # Create description that includes synonyms
             description = term['description']
             if 'synonyms' in term:
-                description += f" (Also known as: {', '.join(term['synonyms'])})"
             
+                description += f" (Also known as: {', '.join(term['synonyms'])})"
             # Generate embedding for the term and its description
             text_to_embed = f"{term['term']} - {description}"
-            embedding = model.encode(text_to_embed)
+           # embedding = model.encode(text_to_embed)
+
+        
+            # # Tokenize and generate embeddings
+            # inputs = model.tokenizer(text_to_embed, return_tensors='pt', padding=True, truncation=True)
+            # with torch.no_grad():
+            #     outputs = model(**inputs)
+            #     embedding = outputs.last_hidden_state[:, 0]  # Adjust based on your needs
+
+            embedding = model.embedding(text_to_embed)            
             logger.debug(f"Generated embedding of dimension {len(embedding)} for term: {term['term']}")
             
             # Create metadata with only non-null values
@@ -1058,6 +1077,8 @@ async def main():
         # Get configuration
         BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
         OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
+
+
         PINECONE_API_KEY = os.getenv("¸")
         
         # Load config file
