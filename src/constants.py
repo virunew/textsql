@@ -4,7 +4,7 @@ VECTOR_DIMENSION = 768  # dimension for llmware embedding model
 VECTOR_METRIC = "cosine"
 VECTOR_SIMILARITY_THRESHOLD = 0.2
 LLMWARE_LLM_MODEL = "llmware/slim-sql-1b-v0"  # Default LLM model for SQL generation
-
+LLMWARE_EMBEDDING_MODEL = "llmware/industry-bert-loans"   
 # LLM Constants
 LLM_TEMPERATURE = 0.0  # GGUF models don't use temperature
 LLM_MAX_TOKENS = 2048  # Default token limit for responses
@@ -38,9 +38,8 @@ PINECONE_CLOUD = "aws"
 PINECONE_REGION = "us-west-2"
 PINECONE_ENVIRONMENT = "us-east1-gcp" 
 
-# LLMWare Constants
-LLMWARE_EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Default embedding model
-LLMWARE_LIBRARY = "textsql"  # Default library name
+
+LLMWARE_LIBRARY = "textsql"   
 
 # ChromaDB Constants
 CHROMA_PERSIST_DIR = "chroma_db" 
