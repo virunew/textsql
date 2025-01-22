@@ -228,14 +228,20 @@ class SemanticAnalyzer:
         embedding = embedding.flatten().tolist()  # Convert to list of floats
 
         tokens = word_tokenize(query.lower())
+        
+        # Identify action type and aggregation
         action_type = self._determine_action_type(tokens)
         aggregation_type = self._determine_aggregation(tokens)
+        
+        # Extract main entities (using compiled patterns)
         main_entities = []
         for term, pattern in self.term_patterns.items():
             if pattern.search(query):
                 main_entities.append(term)
 
         conditions = self._extract_conditions(query, context)
+        
+        # Determine temporal context if any
         temporal_context = self._extract_temporal_context(tokens)
         
         return QueryIntent(
