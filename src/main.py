@@ -1077,9 +1077,6 @@ async def main():
         # Get configuration
         BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
         OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
-
-
-        PINECONE_API_KEY = os.getenv("¸")
         
         # Load config file
         config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"
@@ -1108,15 +1105,30 @@ async def main():
             llm_api_client=llm_api_client
         )
         
-        query = "What's the average credit worthiness for customers with late payments?"
-        logger.info(f"Processing query: {query}")
+        # List of queries to process
+        queries = [
+            "Show payments greater than or equal to $5000",
+            "List customers with at least 3 late payments",
+            "Show customers who don't have late payments",
+            "Find customers except those with high risk",
+            "List customers with a payment history of less than 1 year",
+            "Show payments that are overdue by more than 2 months?",
+       
+            '''Can you please show me a detailed analysis of all customers who have a credit score 
+            above 700 and have made at least 3 payments on time but also had exactly one late 
+            payment in the past year, and sort them by their risk rating in descending order 
+            while also calculating their average payment amount?'''
+        ]
         
-        sql, analysis = await translator.translate_to_sql(query)
-        logger.info(f"Generated SQL: {sql}")
-        logger.debug(f"Analysis: {analysis}")
-        
-        print(f"Generated SQL: {sql}")
-        print(f"Analysis: {analysis}")
+        for query in queries:
+            logger.info(f"Processing query: {query}")
+            sql, analysis = await translator.translate_to_sql(query)
+            logger.info(f"Generated SQL: {sql}")
+            logger.debug(f"Analysis: {analysis}")
+            
+            print(f"Generated SQL for query '{query}': {sql}")
+            print(f"Analysis: {analysis}")
+            print("\n\n\n\n\n")
         
     except Exception as e:
         logger.error("Application error", exc_info=True)
