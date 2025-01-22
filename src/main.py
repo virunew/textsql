@@ -228,11 +228,11 @@ class SemanticAnalyzer:
         embedding = embedding.flatten().tolist()  # Convert to list of floats
 
         tokens = word_tokenize(query.lower())
-        
+
         # Identify action type and aggregation
         action_type = self._determine_action_type(tokens)
         aggregation_type = self._determine_aggregation(tokens)
-        
+
         # Extract main entities (using compiled patterns)
         main_entities = []
         for term, pattern in self.term_patterns.items():
@@ -240,7 +240,7 @@ class SemanticAnalyzer:
                 main_entities.append(term)
 
         conditions = self._extract_conditions(query, context)
-        
+
         # Determine temporal context if any
         temporal_context = self._extract_temporal_context(tokens)
         
@@ -1013,17 +1013,17 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer, model_name=LLMWARE_EMBEDDING_MODEL)
-
+        
         for term in domain_terms:
             description = term['description']
             if 'synonyms' in term:
                 description += f" (Also known as: {', '.join(term['synonyms'])})"
-
+            
             text_to_embed = f"{term['term']} - {description}"
-
+            
             # Get embedding and properly format it
             embedding = model.embedding(text_to_embed)
-
+            
             # Convert the embedding to the correct format
             # If embedding is a 2D array with shape (1, dimension)
             if len(embedding.shape) == 2:
@@ -1031,14 +1031,14 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
             
             # Convert to list of floats
             embedding_list = embedding.flatten().tolist()
-
+            
             # Create metadata
             metadata = {
                 'term': term['term'],
                 'description': term['description'],
                 'synonyms': term.get('synonyms', [])
             }
-
+            
             if term.get('table'):
                 metadata['table'] = term['table']
             if term.get('column'):
