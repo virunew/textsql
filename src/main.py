@@ -6,10 +6,12 @@ from typing import List, Dict, Optional, Tuple, Set, Any
 import numpy as np
 from dataclasses import dataclass
 import torch
+import torch
 import yaml
 from pathlib import Path
 import re
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModel
 from transformers import AutoTokenizer, AutoModel
 from nltk.tokenize import word_tokenize
 from nltk.corpus import wordnet
@@ -25,6 +27,7 @@ from api_clients import  PineconeVectorAPIClient, ChromaVectorAPIClient
 from llm_clients import OpenAILLMClient
 from constants import (
     LLM_TEMPERATURE, LLM_MAX_TOKENS, LLMWARE_EMBEDDING_MODEL, 
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLMWARE_EMBEDDING_MODEL, 
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
     SQL_EXTRACTION_PATTERNS,
     VECTOR_DIMENSION,
@@ -33,10 +36,13 @@ from constants import (
 
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+
 # Configure logging before importing models
 logging.basicConfig(level=config.get_logging_level_by_module('models'))
 
 # Now import the model
+from llmware.models import GGUFGenerativeModel, HFEmbeddingModel, ModelCatalog
 from llmware.models import GGUFGenerativeModel, HFEmbeddingModel, ModelCatalog
 
 # Download required NLTK data
@@ -706,6 +712,10 @@ class QueryTranslator:
             if len(query_embedding.shape) == 2:
                 query_embedding = query_embedding[0]  # Take the first vector if it's a batch
             query_embedding = query_embedding.flatten().tolist()  # Convert to list of floats
+            query_embedding = self.semantic_analyzer.embedding_model.embedding(processed_query)
+            if len(query_embedding.shape) == 2:
+                query_embedding = query_embedding[0]  # Take the first vector if it's a batch
+            query_embedding = query_embedding.flatten().tolist()  # Convert to list of floats
             similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
             
             if similar_terms:
@@ -725,6 +735,7 @@ class QueryTranslator:
             # Generate SQL
             logger.debug("Preparing LLM prompt...")
             prompt = self._prepare_llm_prompt(processed_query, query_intent, similar_terms)
+            logger.debug(f"LLM prompt: {prompt}")
             logger.debug(f"LLM prompt: {prompt}")
             logger.debug("Generating SQL using LLM...")
             llm_request = LLMRequest(
@@ -895,6 +906,7 @@ class QueryTranslator:
         3. Follows standard SQL best practices
         4. Includes appropriate JOIN conditions if multiple tables are needed
         5. Use the least number of joins and conditions to achieve the desired result
+        5. Use the least number of joins and conditions to achieve the desired result
         
         SQL Query:
         """
@@ -1013,6 +1025,9 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
         model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer, model_name=LLMWARE_EMBEDDING_MODEL)
+        hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer, model_name=LLMWARE_EMBEDDING_MODEL)
         
         for term in domain_terms:
             description = term['description']
@@ -1020,6 +1035,19 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
                 description += f" (Also known as: {', '.join(term['synonyms'])})"
             
             text_to_embed = f"{term['term']} - {description}"
+            
+            # Get embedding and properly format it
+            embedding = model.embedding(text_to_embed)
+            
+            # Convert the embedding to the correct format
+            # If embedding is a 2D array with shape (1, dimension)
+            if len(embedding.shape) == 2:
+                embedding = embedding[0]  # Take the first (and only) vector
+            
+            # Convert to list of floats
+            embedding_list = embedding.flatten().tolist()
+            
+            # Create metadata
             
             # Get embedding and properly format it
             embedding = model.embedding(text_to_embed)
@@ -1047,12 +1075,15 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
                 metadata['value'] = term['value']
             
             # Create vector data with properly formatted embedding
+            # Create vector data with properly formatted embedding
             vector_data.append(VectorData(
                 id=f"term_{term['term'].replace(' ', '_')}",
+                vector=embedding_list,  # Use the properly formatted embedding
                 vector=embedding_list,  # Use the properly formatted embedding
                 metadata=metadata
             ))
             
+            logger.debug(f"Created vector data for term: {term['term']} with embedding dimension {len(embedding_list)}")
             logger.debug(f"Created vector data for term: {term['term']} with embedding dimension {len(embedding_list)}")
         
         # Store vectors in database

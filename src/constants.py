@@ -42,5 +42,7 @@ PINECONE_ENVIRONMENT = "us-east1-gcp"
 
 LLMWARE_LIBRARY = "textsql"   
 
+LLMWARE_LIBRARY = "textsql"   
+
 # ChromaDB Constants
 CHROMA_PERSIST_DIR = "chroma_db" 
