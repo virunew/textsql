@@ -5,10 +5,12 @@ import asyncio
 from typing import List, Dict, Optional, Tuple, Set, Any
 import numpy as np
 from dataclasses import dataclass
+import torch
 import yaml
 from pathlib import Path
 import re
 from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModel
 from nltk.tokenize import word_tokenize
 from nltk.corpus import wordnet
 import sqlparse
@@ -22,18 +24,20 @@ from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIC
 from api_clients import  PineconeVectorAPIClient, ChromaVectorAPIClient
 from llm_clients import OpenAILLMClient
 from constants import (
-    LLM_TEMPERATURE, LLM_MAX_TOKENS, 
+    LLM_TEMPERATURE, LLM_MAX_TOKENS, LLMWARE_EMBEDDING_MODEL, 
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
     SQL_EXTRACTION_PATTERNS,
     VECTOR_DIMENSION,
     LLMWARE_LLM_MODEL
 )
 
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+
 # Configure logging before importing models
 logging.basicConfig(level=config.get_logging_level_by_module('models'))
 
 # Now import the model
-from llmware.models import GGUFGenerativeModel
+from llmware.models import GGUFGenerativeModel, HFEmbeddingModel, ModelCatalog
 
 # Download required NLTK data
 try:
@@ -181,7 +185,13 @@ class SemanticAnalyzer:
     
     def __init__(self, config: dict):
         self.config = config
-        self.embedding_model = SentenceTransformer('all-mpnet-base-v2')
+        hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        self.embedding_model = HFEmbeddingModel(
+            model=hf_model,
+            tokenizer=hf_tokenizer,
+            model_name=LLMWARE_EMBEDDING_MODEL
+        )
         self.term_patterns = self._compile_term_patterns()
         
     def _compile_term_patterns(self) -> Dict[str, re.Pattern]:
@@ -212,22 +222,25 @@ class SemanticAnalyzer:
         Returns:
             QueryIntent object with analysis results
         """
-        # Tokenize query
+        embedding = self.embedding_model.embedding(query)
+        if len(embedding.shape) == 2:
+            embedding = embedding[0]  # Take the first vector if it's a batch
+        embedding = embedding.flatten().tolist()  # Convert to list of floats
+
         tokens = word_tokenize(query.lower())
-        
+
         # Identify action type and aggregation
         action_type = self._determine_action_type(tokens)
         aggregation_type = self._determine_aggregation(tokens)
-        
+
         # Extract main entities (using compiled patterns)
         main_entities = []
         for term, pattern in self.term_patterns.items():
             if pattern.search(query):
                 main_entities.append(term)
-        
-        # Extract conditions
+
         conditions = self._extract_conditions(query, context)
-        
+
         # Determine temporal context if any
         temporal_context = self._extract_temporal_context(tokens)
         
@@ -289,10 +302,26 @@ class SemanticAnalyzer:
         """Extract temporal context if present"""
         temporal_indicators = {
             'today': 'CURRENT_DATE',
+            'tomorrow': 'CURRENT_DATE + 1',
+            'next week': 'CURRENT_DATE + 7',
+            'next month': 'CURRENT_DATE + 30',
+            'next quarter': 'CURRENT_DATE + 90',
+            'next year': 'CURRENT_DATE + 365',
+            'today': 'CURRENT_DATE',
             'yesterday': 'CURRENT_DATE - 1',
             'this month': 'CURRENT_MONTH',
             'last month': 'PREVIOUS_MONTH',
-            'this year': 'CURRENT_YEAR'
+            'this year': 'CURRENT_YEAR',
+            'last year': 'PREVIOUS_YEAR',
+            'next week': 'CURRENT_DATE + 7',
+            'next month': 'CURRENT_DATE + 30',
+            'next quarter': 'CURRENT_DATE + 90',
+            'next year': 'CURRENT_DATE + 365',
+            'yesterday': 'CURRENT_DATE - 1',
+            'this month': 'CURRENT_MONTH',
+            'last month': 'PREVIOUS_MONTH',
+            'this year': 'CURRENT_YEAR',
+            'last year': 'PREVIOUS_YEAR'
         }
         
         query_text = ' '.join(tokens)
@@ -673,7 +702,10 @@ class QueryTranslator:
             
             # Find similar terms
             logger.debug("Finding similar terms...")
-            query_embedding = self.semantic_analyzer.embedding_model.encode(processed_query)
+            query_embedding = self.semantic_analyzer.embedding_model.embedding(processed_query)
+            if len(query_embedding.shape) == 2:
+                query_embedding = query_embedding[0]  # Take the first vector if it's a batch
+            query_embedding = query_embedding.flatten().tolist()  # Convert to list of floats
             similar_terms = await self.vector_manager.find_similar_terms(query_embedding)
             
             if similar_terms:
@@ -693,7 +725,7 @@ class QueryTranslator:
             # Generate SQL
             logger.debug("Preparing LLM prompt...")
             prompt = self._prepare_llm_prompt(processed_query, query_intent, similar_terms)
-            
+            logger.debug(f"LLM prompt: {prompt}")
             logger.debug("Generating SQL using LLM...")
             llm_request = LLMRequest(
                 prompt=prompt,
@@ -713,7 +745,6 @@ class QueryTranslator:
                     add_context=llm_request.additional_context.get("context"),
                     inference_dict={
                         "temperature": llm_request.temperature,
-                        "max_tokens": llm_request.max_tokens
                     }
                 )
 
@@ -863,6 +894,7 @@ class QueryTranslator:
         2. Implements the identified aggregations and conditions
         3. Follows standard SQL best practices
         4. Includes appropriate JOIN conditions if multiple tables are needed
+        5. Use the least number of joins and conditions to achieve the desired result
         
         SQL Query:
         """
@@ -978,27 +1010,35 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         
         # Create vector data for each term
         vector_data = []
-        model = SentenceTransformer('all-mpnet-base-v2')
+        hf_tokenizer = AutoTokenizer.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        hf_model = AutoModel.from_pretrained(LLMWARE_EMBEDDING_MODEL)
+        model = HFEmbeddingModel(model=hf_model, tokenizer=hf_tokenizer, model_name=LLMWARE_EMBEDDING_MODEL)
         
         for term in domain_terms:
-            # Create description that includes synonyms
             description = term['description']
             if 'synonyms' in term:
                 description += f" (Also known as: {', '.join(term['synonyms'])})"
             
-            # Generate embedding for the term and its description
             text_to_embed = f"{term['term']} - {description}"
-            embedding = model.encode(text_to_embed)
-            logger.debug(f"Generated embedding of dimension {len(embedding)} for term: {term['term']}")
             
-            # Create metadata with only non-null values
+            # Get embedding and properly format it
+            embedding = model.embedding(text_to_embed)
+            
+            # Convert the embedding to the correct format
+            # If embedding is a 2D array with shape (1, dimension)
+            if len(embedding.shape) == 2:
+                embedding = embedding[0]  # Take the first (and only) vector
+            
+            # Convert to list of floats
+            embedding_list = embedding.flatten().tolist()
+            
+            # Create metadata
             metadata = {
                 'term': term['term'],
                 'description': term['description'],
                 'synonyms': term.get('synonyms', [])
             }
             
-            # Add optional fields only if they exist and are not None
             if term.get('table'):
                 metadata['table'] = term['table']
             if term.get('column'):
@@ -1006,14 +1046,14 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
             if term.get('value'):
                 metadata['value'] = term['value']
             
-            # Create vector data
+            # Create vector data with properly formatted embedding
             vector_data.append(VectorData(
                 id=f"term_{term['term'].replace(' ', '_')}",
-                vector=embedding.tolist(),  # Convert numpy array to list
+                vector=embedding_list,  # Use the properly formatted embedding
                 metadata=metadata
             ))
             
-            logger.debug(f"Created vector data for term: {term['term']}")
+            logger.debug(f"Created vector data for term: {term['term']} with embedding dimension {len(embedding_list)}")
         
         # Store vectors in database
         logger.info(f"Attempting to store {len(vector_data)} vectors in database")
@@ -1043,7 +1083,6 @@ async def main():
         # Get configuration
         BASE_PROJECT_PATH = os.getenv("BASE_PROJECT_PATH")
         OPEN_AI_API_KEY = os.getenv("OPEN_AI_API_KEY")
-        PINECONE_API_KEY = os.getenv("¸")
         
         # Load config file
         config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"
@@ -1072,15 +1111,30 @@ async def main():
             llm_api_client=llm_api_client
         )
         
-        query = "What's the average credit worthiness for customers with late payments?"
-        logger.info(f"Processing query: {query}")
-        
-        sql, analysis = await translator.translate_to_sql(query)
-        logger.info(f"Generated SQL: {sql}")
-        logger.debug(f"Analysis: {analysis}")
-        
-        print(f"Generated SQL: {sql}")
-        print(f"Analysis: {analysis}")
+        # List of queries to process
+        queries = [
+            "Show payments greater than or equal to $5000",
+            "List customers with at least 3 late payments",
+            "Show customers who don't have late payments",
+            "Find customers except those with high risk",
+            "List customers with a payment history of less than 1 year",
+            "Show payments that are overdue by more than 2 months?",
+
+            '''Can you please show me a detailed analysis of all customers who have a credit score 
+            above 700 and have made at least 3 payments on time but also had exactly one late 
+            payment in the past year, and sort them by their risk rating in descending order 
+            while also calculating their average payment amount?'''
+        ]
+
+        for query in queries:
+            logger.info(f"Processing query: {query}")
+            sql, analysis = await translator.translate_to_sql(query)
+            logger.info(f"Generated SQL: {sql}")
+            logger.debug(f"Analysis: {analysis}")
+
+            print(f"Generated SQL for query '{query}': {sql}")
+            print(f"Analysis: {analysis}")
+            print("\n\n\n\n\n")
         
     except Exception as e:
         logger.error("Application error", exc_info=True)
