@@ -3,3 +3,6 @@ nltk>=3.8.1
 sentence-transformers>=2.2.2
 llmware>=0.3.0
 chromadb>=0.4.22 
+aiohttp>=3.8.5
+sqlparse>=0.4.4
+openai>=1.31.0
