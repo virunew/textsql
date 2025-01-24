@@ -6,3 +6,6 @@ chromadb>=0.4.22
 aiohttp>=3.8.5
 sqlparse>=0.4.4
 openai>=1.31.0
+sqlglot>=0.10.0
+pandas>=2.1.1
+sqlalchemy>=2.0.31
