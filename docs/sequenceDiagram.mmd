@@ -1,0 +1,38 @@
+sequenceDiagram
+    participant Client
+    participant QueryTranslator
+    participant SemanticAnalyzer
+    participant VectorManager
+    participant VectorDB
+    participant LLMClient
+    participant SchemaManager
+    participant SQLValidator
+    participant Database
+
+    Client->>QueryTranslator: Natural language query
+    
+    QueryTranslator->>SemanticAnalyzer: Analyze query intent
+    SemanticAnalyzer->>VectorManager: Generate query embedding
+    VectorManager->>VectorDB: Search similar queries/terms
+    VectorDB-->>VectorManager: Similar vectors & metadata
+    VectorManager-->>SemanticAnalyzer: Similar terms/patterns
+    
+    SemanticAnalyzer->>SchemaManager: Get schema metadata
+    SchemaManager-->>SemanticAnalyzer: Schema info (tables, columns)
+    SemanticAnalyzer->>SemanticAnalyzer: Extract entities & relationships
+    SemanticAnalyzer-->>QueryTranslator: Query analysis results
+    
+    QueryTranslator->>LLMClient: Generate SQL with context
+    Note over LLMClient: Using LLMWARE_LLM_MODEL
+    LLMClient-->>QueryTranslator: Generated SQL
+    
+    QueryTranslator->>SQLValidator: Validate generated SQL
+    SQLValidator-->>QueryTranslator: Validation result
+    
+    alt SQL is valid
+        QueryTranslator->>Database: Execute SQL query
+        Database-->>QueryTranslator: Query results
+        QueryTranslator-->>Client: Formatted results
+    else SQL is invalid
+        QueryTranslator-->>Client: Error message
+    end
