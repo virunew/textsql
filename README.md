@@ -1,4 +1,11 @@
-I'll provide a comprehensive explanation of this text-to-SQL application system. Let's break it down into its core components and understand how they work together to transform natural language queries into SQL.
+### Domain aware Text to SQL solution
+
+
+General text to sql solutions work on well known use cases like employee database, but do not work when specific domain or enterprise specific terminology is used in the natural language query, or when the database and column names do not correctly explain the entities they represent.
+
+This solution provides a way to define the schema of your databases and domain specific terms in a structured way to enable correct SQL query formation from natural language questions.
+
+
 
 1. Application Architecture
 
