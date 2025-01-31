@@ -22,7 +22,6 @@ from config import config
 
 from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient, LLMWareAPIClient, LLMWareEmbeddingClient
 from api_clients import  PineconeVectorAPIClient, ChromaVectorAPIClient
-from llm_clients import OpenAILLMClient
 from constants import (
     LLM_TEMPERATURE, LLM_MAX_TOKENS, LLMWARE_EMBEDDING_MODEL, 
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
@@ -38,22 +37,6 @@ logging.basicConfig(level=config.get_logging_level_by_module('models'))
 
 # Now import the model
 from llmware.models import GGUFGenerativeModel, HFEmbeddingModel, ModelCatalog
-
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-
-try:
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('wordnet')
-
-try:
-    nltk.data.find('tokenizers/punkt_tab')
-except LookupError:
-    nltk.download('punkt_tab')
 
 def setup_logging(log_level=logging.INFO):
     """Configure logging with a custom format"""

@@ -8,6 +8,15 @@ from llmware.models import ModelCatalog
 from llmware.embeddings import EmbeddingHandler
 from llmware.configs import LLMWareConfig
 
+
+
+class LLMError(Exception):
+    """Custom exception for LLM API errors"""
+    def __init__(self, message: str, original_error: Optional[Exception] = None):
+        super().__init__(message)
+        self.original_error = original_error
+
+
 @dataclass 
 class LLMRequest:
     """
