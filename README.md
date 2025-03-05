@@ -174,4 +174,10 @@ WHERE payment_history.payment_status = 'Late';
 - Implement query success rate monitoring
 - Add detailed logging for debugging
 
+
+TODO:
+1. Business rules in schema.yaml are not being utilized properly
+2. Add support for vector endpoints
+3. Add flask server
+
 Would you like me to elaborate on any particular aspect or explore how to implement any of these enhancements?

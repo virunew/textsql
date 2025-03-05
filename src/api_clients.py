@@ -402,7 +402,10 @@ class ChromaVectorAPIClient(VectorAPIClient):
         logger.info(f"Initializing ChromaDB with collection: {collection_name}")
         
         # Initialize ChromaDB client with persistence
-        self.client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+        self.client = chromadb.PersistentClient(
+            path=CHROMA_PERSIST_DIR,
+            settings=Settings(anonymized_telemetry=False)
+        )
         
         # Get or create collection
         try:

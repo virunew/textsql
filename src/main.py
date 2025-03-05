@@ -35,6 +35,9 @@ HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 # Configure logging before importing models
 logging.basicConfig(level=config.get_logging_level_by_module('models'))
 
+# Suppress logs from requests.exceptions
+logging.getLogger("requests.exceptions").setLevel(logging.CRITICAL)
+
 # Now import the model
 from llmware.models import GGUFGenerativeModel, HFEmbeddingModel, ModelCatalog
 
@@ -58,6 +61,8 @@ def setup_logging(log_level=logging.INFO):
             logging.StreamHandler()
         ]
     )
+    
+    logging.getLogger("requests.exceptions").setLevel(logging.CRITICAL)
     
     return logging.getLogger(__name__)
 
@@ -1052,8 +1057,7 @@ async def initialize_vector_db(vector_api_client: VectorAPIClient, config: dict)
         raise
 
 async def main():
-    # Setup logging
-    logger = setup_logging(logging.DEBUG)
+    setup_logging()
     logger.info("Starting Text-to-SQL application")
     
     try:
