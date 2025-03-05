@@ -4,7 +4,7 @@ import aiohttp
 import numpy as np
 from pinecone import Pinecone
 import logging
-from interfaces import VectorAPIClient, VectorData, VectorSearchResult, VectorDBError
+from src.interfaces import VectorAPIClient, VectorData, VectorSearchResult, VectorDBError
 from constants import (
     VECTOR_NAMESPACE, VECTOR_DIMENSION, VECTOR_METRIC,
     PINECONE_CLOUD, PINECONE_REGION, VECTOR_SIMILARITY_THRESHOLD,

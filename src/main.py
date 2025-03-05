@@ -18,11 +18,13 @@ from sqlparse.sql import Where, Comparison
 import nltk
 import logging
 from datetime import datetime
-from config import config
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src.config import config
 
-from interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient, LLMWareAPIClient, LLMWareEmbeddingClient
-from api_clients import  PineconeVectorAPIClient, ChromaVectorAPIClient
-from constants import (
+from src.interfaces import VectorManager, VectorData, VectorSearchResult, VectorAPIClient, LLMRequest, LLMResponse,VectorDBError,LLMAPIClient, LLMWareAPIClient, LLMWareEmbeddingClient
+from src.api_clients import PineconeVectorAPIClient, ChromaVectorAPIClient
+from src.constants import (
     LLM_TEMPERATURE, LLM_MAX_TOKENS, LLMWARE_EMBEDDING_MODEL, 
     LOG_FORMAT, LOG_DATE_FORMAT, LOG_FILE_PREFIX, LOG_DIR,
     SQL_EXTRACTION_PATTERNS,

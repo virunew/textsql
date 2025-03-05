@@ -1,19 +1,42 @@
 import os
 import asyncio
+from threading import Thread
 import logging
+import re
+import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pathlib import Path
 import yaml
 from dotenv import load_dotenv
-from threading import Thread
-import re
 
-# Import from existing code
-from src.main import setup_logging, QueryTranslator, initialize_vector_db, QueryIntent
-from src.api_clients import ChromaVectorAPIClient
-from src.interfaces import LLMWareAPIClient
+# Add the project root to the Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, project_root)
+
+# Create a patch for the imports in the src directory
+# This will modify the sys.modules to fix relative imports
+def patch_imports():
+    # Create __init__.py in src directory if it doesn't exist
+    src_init_path = os.path.join(project_root, 'src', '__init__.py')
+    if not os.path.exists(src_init_path):
+        with open(src_init_path, 'w') as f:
+            f.write('# This file marks the directory as a Python package\n')
+    
+    # Add src to path
+    src_path = os.path.join(project_root, 'src')
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+# Apply the patch
+patch_imports()
+
+# Now import the modules
+from src.config import config
 from src.constants import LLMWARE_LLM_MODEL
+from src.interfaces import LLMWareAPIClient
+from src.api_clients import ChromaVectorAPIClient
+from src.main import setup_logging, QueryTranslator, initialize_vector_db, QueryIntent
 
 # Load environment variables
 load_dotenv()
@@ -30,7 +53,7 @@ CORS(app)  # Enable CORS for all routes
 translator = None
 initialization_complete = False
 initialization_error = None
-config = None
+config_data = None
 
 def run_async_task(coro):
     """Run an async task in the current event loop or create a new one"""
@@ -44,12 +67,23 @@ def run_async_task(coro):
 class EnhancedSemanticAnalyzer:
     """Enhanced version of the semantic analyzer that properly populates the intent object"""
     
-    def __init__(self, original_analyzer, config):
+    def __init__(self, original_analyzer, config_data):
         self.original_analyzer = original_analyzer
-        self.config = config
-        self.domain_terms = config.get('domain_terms', [])
-        self.schema = config.get('schema', {})
+        self.config_data = config_data
+        self.domain_terms = config_data.get('domain_terms', [])
+        self.schema = config_data.get('schema', {})
         self.tables = self.schema.get('tables', {})
+        
+        # Copy all attributes from the original analyzer
+        for attr_name in dir(original_analyzer):
+            # Skip private attributes and methods
+            if not attr_name.startswith('_') and not callable(getattr(original_analyzer, attr_name)):
+                setattr(self, attr_name, getattr(original_analyzer, attr_name))
+        
+        # Explicitly copy the embedding_model
+        self.embedding_model = original_analyzer.embedding_model
+        # Copy the term_patterns
+        self.term_patterns = original_analyzer.term_patterns
     
     def analyze_query(self, query, context):
         # Get the original intent
@@ -89,9 +123,10 @@ class EnhancedSemanticAnalyzer:
                 
                 # Check for column synonyms
                 synonyms = column_info.get('synonyms', [])
-                for synonym in synonyms:
-                    if synonym.lower() in query_lower:
-                        main_entities.append(f"{table_name}.{column_name}")
+                if synonyms:
+                    for synonym in synonyms:
+                        if synonym.lower() in query_lower:
+                            main_entities.append(f"{table_name}.{column_name}")
         
         # Check for domain terms in the query
         for term_info in self.domain_terms:
@@ -104,12 +139,13 @@ class EnhancedSemanticAnalyzer:
             
             # Check for term synonyms
             synonyms = term_info.get('synonyms', [])
-            for synonym in synonyms:
-                if synonym.lower() in query_lower:
-                    table = term_info.get('table', '')
-                    column = term_info.get('column', '')
-                    if table and column:
-                        main_entities.append(f"{table}.{column}")
+            if synonyms:
+                for synonym in synonyms:
+                    if synonym.lower() in query_lower:
+                        table = term_info.get('table', '')
+                        column = term_info.get('column', '')
+                        if table and column:
+                            main_entities.append(f"{table}.{column}")
         
         return list(set(main_entities))  # Remove duplicates
     
@@ -148,10 +184,11 @@ class EnhancedSemanticAnalyzer:
             # Check if the term or its synonyms are in the query
             term_in_query = term.lower() in query_lower
             synonyms = term_info.get('synonyms', [])
-            for synonym in synonyms:
-                if synonym.lower() in query_lower:
-                    term_in_query = True
-                    break
+            if synonyms:
+                for synonym in synonyms:
+                    if synonym.lower() in query_lower:
+                        term_in_query = True
+                        break
             
             if not term_in_query:
                 continue
@@ -222,7 +259,7 @@ class EnhancedSemanticAnalyzer:
 
 def initialize_in_background():
     """Initialize the QueryTranslator in a background thread"""
-    global translator, initialization_complete, initialization_error, config
+    global translator, initialization_complete, initialization_error, config_data
     
     try:
         logger.info("Initializing API clients...")
@@ -233,7 +270,7 @@ def initialize_in_background():
         # Load config file
         config_path = Path(BASE_PROJECT_PATH) / "src/config/schema.yaml"
         with open(config_path) as f:
-            config = yaml.safe_load(f)
+            config_data = yaml.safe_load(f)
         
         # Initialize ChromaDB vector store
         vector_api_client = ChromaVectorAPIClient(
@@ -246,7 +283,7 @@ def initialize_in_background():
         )
         
         # Initialize vector database with domain terms
-        run_async_task(initialize_vector_db(vector_api_client, config))
+        run_async_task(initialize_vector_db(vector_api_client, config_data))
         
         logger.info("Initializing QueryTranslator...")
         translator = QueryTranslator(
@@ -256,10 +293,11 @@ def initialize_in_background():
         )
         
         # Enhance the semantic analyzer
-        translator.semantic_analyzer = EnhancedSemanticAnalyzer(
+        enhanced_analyzer = EnhancedSemanticAnalyzer(
             translator.semantic_analyzer,
-            config
+            config_data
         )
+        translator.semantic_analyzer = enhanced_analyzer
         
         initialization_complete = True
         logger.info("Initialization complete")
@@ -337,6 +375,6 @@ if __name__ == '__main__':
     init_thread.start()
     
     # Run the Flask app
-    port = int(os.getenv('PORT', 5000))
+    port = int(os.getenv('PORT', 5001))
     logger.info(f"Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False) 
